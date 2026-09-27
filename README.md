@@ -442,7 +442,7 @@ The Jepsen-style test found two real bugs before this release (money created by 
 
 ## Status and roadmap
 
-Chronos DB is a **working engine at v0.1**, not yet released or used in production.
+Chronos DB is a **working engine at v0.1**, about to be released, and not yet used in production.
 
 - [x] Worlds: fork, diff, three-way merge, partial merges, time travel, undo
 - [x] Postgres wire protocol and a broad SQL surface, checked against Postgres 17
@@ -453,11 +453,13 @@ Chronos DB is a **working engine at v0.1**, not yet released or used in producti
 - [x] Durability: WAL, crash suite, shuttle, Jepsen-style kills; S3 storage
 - [x] Parallel execution and spill to disk
 - [x] Bounded memory for big work: `CREATE INDEX` / `ADD UNIQUE`, one big `INSERT` / `UPDATE` / `DELETE` / `COPY` (atomic), `DISTINCT` aggregates
-- [ ] **Next:** fixes from a full code review (~65 findings: parser and regex recursion limits, caps on user-controlled sizes, lock poisoning after a panic, an Origin/Host check on the tokenless loopback HTTP API, hardened spill files)
+- [x] Chronos Studio, built in: worlds and the worldline, data grid with in-place editing, import and export, schema diagram, SQL, hybrid and vector search with a map of the vector space, changes and merges, history and checkpoints, simulations, agents, settings
+- [x] Fixes from three full code reviews: parser and regex recursion limits, caps on user-controlled sizes, lock poisoning after a panic, Origin and Host checks on the loopback HTTP API, hardened spill files
+- [ ] **Now:** first tagged release (v0.1.0): signed binaries for macOS and Linux
+- [ ] **Next:** a plain scan's memory stays flat as tables grow (today ~70 MB at 4M rows, ~200 MB at 10M)
 - [ ] Faster bulk vector ingest (`COPY FROM STDIN` with binary vectors; 20 s vs LanceDB 2 s today)
-- [ ] A plain scan's memory still grows with table size (~70 MB at 4M rows, ~200 MB at 10M)
+- [ ] A fourth full code review, before an outside one
 - [ ] Neon branching benchmark (Dolt and DuckDB done; waiting on a Neon API key)
-- [x] First tagged release (v0.1.0): signed binaries for macOS and Linux
 - [ ] Outside review of the storage code, design partners
 
 See [CHANGELOG.md](CHANGELOG.md) for everything that has shipped, and [SECURITY.md](SECURITY.md) to report a vulnerability.
