@@ -1,0 +1,38 @@
+name: Bug report
+description: Something in Chronos doesn't work as the docs say
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting it. The fastest fix comes from a few lines that reproduce it.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead (paste errors whole, with their SQLSTATE if there is one).
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Shell commands, SQL or an HTTP request that show it from an empty database.
+      render: shell
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `chronos --version`
+      placeholder: chronos 0.1.0
+    validations: { required: true }
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options: [Shell, SQL (psql or a driver), HTTP API, TypeScript or Python client, MCP, Studio, Install]
+    validations: { required: true }
+  - type: input
+    id: os
+    attributes:
+      label: OS and CPU
+      placeholder: macOS 15, arm64

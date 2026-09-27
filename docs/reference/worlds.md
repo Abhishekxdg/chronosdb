@@ -1,0 +1,523 @@
+---
+title: Worlds in SQL
+---
+
+Every statement that forks, compares, merges, rewinds or simulates worlds. Why they work the way they do: [concepts](../concepts.md#worlds). Other SQL: [SQL](../sql.md).
+
+```sql
+create world agent_7 with (task = 42);
+switch world agent_7;
+update orders set status = 'paid' where id = 7;
+diff;                       -- what agent_7 changed
+merge world agent_7;        -- into main; the session moves back to main
+```
+
+## Names and moments
+
+- **World names:** a bare name (`agent_7`), a double-quoted name (`"agent-7"`), or a string (`'agent-7'`). A name with a dash must be quoted: `task-1` unquoted fails with 42601 `world names with a dash need quotes`.
+- **Reserved:** a name can't be empty or contain `@` (42602), or start with `_tx_` (42939: transactions use those).
+- **A world ID** works wherever a world is read or switched to: `switch world '<id>'`, `fork world '<id>' as b`.
+- **A world as it was:** `'name@when'`, read only. Works in `DIFF ... TO` (either side), `FORK WORLD` / `CREATE WORLD ... FROM`, `SIMULATE ... FROM`, and as a Postgres database name (the whole session reads the past; writes fail with 25006).
+- **`when`** is one of:
+
+| Form | Example | Meaning |
+|---|---|---|
+| a time | `2026-09-20 10:00`, `2026-09-20 10:00:00+02` | UTC unless it gives an offset |
+| `now` | `now` | this moment |
+| a time ago | `-15 minutes`, `-1 day`, `-2 hours` | a new moment each time it runs |
+
+In `AS OF`, `RESTORE ... TO` and `UNDO AGENT ... SINCE`, `when` is an expression: a string as above, a `timestamp`, `timestamptz` or `date` value, or a parameter (`$1`). Anything else fails with 22P02 `AS OF needs a time`.
+
+History reaches back `history_retention` (30 days by default). Earlier than that, later than now, or on an in-memory database: 22023.
+
+## Statements
+
+| Statement | Returns | Needs (agents) |
+|---|---|---|
+| [`CREATE WORLD` / `CREATE BRANCH`](#create-world) | tag `CREATE WORLD` | `fork` |
+| [`FORK WORLD`](#fork-world) | tag `CREATE WORLD` | `fork` |
+| [`SWITCH WORLD` / `USE WORLD` / `USE BRANCH`](#switch-world) | tag `SWITCH WORLD` / `USE BRANCH` | `read` |
+| [`SHOW WORLDS`](#show-worlds) | rows | `read` |
+| [`SHOW BRANCHES`](#show-branches) | rows | `read` |
+| [`ALTER WORLD`](#alter-world) | the world's row, tag `ALTER WORLD` | own world; TTL and pin: `admin` |
+| [`DROP WORLD` / `DELETE WORLD` / `DROP BRANCH`](#drop-world) | tag `DROP WORLD` / `DROP BRANCH` | own world(s) |
+| [`DIFF`](#diff) | rows | `read` |
+| [`MERGE WORLD` / `MERGE BRANCH`](#merge) | tag `MERGE n` | `merge`, or `merge_own` |
+| [`MERGE ... DRY RUN`](#merge-dry-run) | rows | `read` |
+| [`UNDO MERGE`](#undo-merge) | tag `UNDO MERGE n` | `restore` and `merge`, or `admin` |
+| [`AS OF`](#as-of) | a table as it was | `read` |
+| [`RESTORE WORLD`](#restore-world) | tag `RESTORE n` | `restore` |
+| [`CHECKPOINT WORLD`](#checkpoint-world) | tag `CHECKPOINT` | own world |
+| [`UNDO AGENT`](#undo-agent) | tag `UNDO AGENT n` | `restore` and `merge`, or `admin` |
+| [`SHOW HISTORY`](#show-history) | rows | `read` |
+| [`SIMULATE`](#simulate) | rows, tag `SIMULATE n` | `fork` (checked as it runs) |
+| [`REPLAY WORLD`](#replay-world) | one row, tag `REPLAY` | checked as it runs |
+| [`SHOW STORAGE`](#show-storage) | rows | `read` |
+| [`SHOW DISK`](#show-disk) | rows | `read` |
+| [`SHOW METRICS`](#show-metrics) | rows | `read` |
+| [`ALTER SYSTEM SET history_retention`](#history-retention) | tag `ALTER SYSTEM` | `admin` |
+
+- **Not inside a transaction:** `CREATE`/`FORK`/`DROP`/`SWITCH`/`USE`/`MERGE`/`ALTER WORLD`, `RESTORE`, `UNDO MERGE`, `UNDO AGENT`, `SIMULATE`, `REPLAY` and `ALTER SYSTEM` fail with 25001 between `BEGIN` and `COMMIT`.
+- **Agents:** rights are listed in [concepts](../concepts.md#agents). A refused statement fails with 42501. "Own world" means one the agent forked.
+- **MCP safe mode** refuses every statement above except the `SHOW`s, `DIFF`, `MERGE ... DRY RUN` and `AS OF` reads (see [MCP](mcp.md#safe-mode)).
+
+## CREATE WORLD
+
+```
+CREATE WORLD name [FROM source] [WITH (key = value, ...) | META '<json object>']
+CREATE BRANCH name [FROM source] [WITH (...) | META '...']
+```
+
+- **Source:** the session's world unless `FROM` names one: a name, an ID, or `'name@when'` (the new world holds that past; agents need `admin` for this).
+- **Metadata:** `WITH` values are strings, numbers, `true`, `false` or `null`. `META` takes a JSON object. Keys starting with `_sonos` are the database's (22023). At most 64 KB as JSON (22023).
+- **The session stays** on its world. Switch with `SWITCH WORLD`.
+
+```sql
+create world agent_7 from main with (owner = 'claude', task = 42);
+create world check_it from 'main@-1 hour';
+```
+
+Errors: 42710 exists; 3D000 no such source; 53400 past `max_worlds` (see [CLI settings](cli.md#database-settings)); 42501 an agent past its own `max_worlds`; 22P02 `META` isn't JSON.
+
+## FORK WORLD
+
+```
+FORK WORLD source [AS] name [WITH (key = value, ...) | META '<json object>']
+```
+
+`CREATE WORLD name FROM source` with the source first. Same errors.
+
+```sql
+fork world agent_7 as agent_7b meta '{"tags": ["retry"]}';
+fork world 'main@2026-09-20 10:00' as before_the_deploy;
+```
+
+## SWITCH WORLD
+
+```
+SWITCH WORLD name
+SWITCH BRANCH name
+USE WORLD name
+USE BRANCH name
+USE name
+```
+
+The session's statements run on that world from now on. `name` is a world's name or ID (3D000 otherwise).
+
+```sql
+switch world agent_7;
+use world '<its id>';   -- by ID, from SHOW WORLDS
+```
+
+Over the Postgres port the database name does the same: `psql postgres://127.0.0.1:5433/agent_7`. To read a past moment for a whole session, connect to the database `main@-1 hour` (read only; writes fail with 25006).
+
+## SHOW WORLDS
+
+```
+SHOW WORLDS
+```
+
+One row per live world, main included (transactions' hidden worlds are left out).
+
+| Column | Type | |
+|---|---|---|
+| `name` | text | |
+| `id` | text | stable ID; main's is `main` |
+| `parent` | text | null for main |
+| `depth` | integer | forks from main |
+| `created` | timestamptz | null for main |
+| `version` | bigint | the world's write version |
+| `meta` | jsonb | its metadata, without the database's own keys |
+| `owner` | text | the agent that forked it, or null |
+| `expires` | timestamptz | when it's discarded (TTL), or null |
+| `active` | timestamptz | last used; null for main |
+| `pinned` | boolean | never discarded for being idle |
+
+## SHOW BRANCHES
+
+```
+SHOW BRANCHES
+```
+
+| Column | Type | |
+|---|---|---|
+| `name` | text | |
+| `parent` | text | null for main |
+| `changes` | bigint | rows changed since its fork; null for main |
+
+## ALTER WORLD
+
+```
+ALTER WORLD name SET (key = value, ...)
+ALTER WORLD name SET TTL '<interval>'
+ALTER WORLD name RESET TTL
+ALTER WORLD name SET PINNED
+ALTER WORLD name RESET PINNED
+```
+
+| Form | Effect |
+|---|---|
+| `SET (k = v, ...)` | sets each key in its metadata; `null` removes one |
+| `SET TTL '2 hours'` | discarded that long from now (unless it has forks then). No `=`. |
+| `RESET TTL` | never expires |
+| `SET PINNED` | never discarded for being idle (`world_idle_ttl`) |
+| `RESET PINNED` | idle rules apply again |
+
+Returns the world's row, with the `SHOW WORLDS` columns. TTL and pin forms on main fail with 22023. Agents need `admin` for TTL and pins, else the world must be their own.
+
+```sql
+alter world agent_7 set (task = null, reviewer = 'ada');
+alter world agent_7 set ttl '1 day';
+```
+
+## DROP WORLD
+
+```
+DROP WORLD [IF EXISTS] name [CASCADE]
+DELETE WORLD [IF EXISTS] name [CASCADE]
+DROP BRANCH [IF EXISTS] name [CASCADE]
+```
+
+- **Without `CASCADE`:** refused while it has live forks (2BP01).
+- **With `CASCADE`:** it and every world forked from it, deepest first.
+- **The session's world:** if it's dropped, the session carries on from its parent.
+
+Errors: 3D000 no such world (unless `IF EXISTS`); 2BP01 has forks; 0A000 main.
+
+```sql
+drop world agent_7 cascade;
+```
+
+## DIFF
+
+```
+DIFF
+DIFF [WORLD | BRANCH] a
+DIFF [WORLD | BRANCH] a TO b
+... [AS SQL]
+```
+
+| Form | Compares |
+|---|---|
+| `DIFF` | the session's world since its fork |
+| `DIFF WORLD a` | `a` since its fork |
+| `DIFF WORLD a TO b` | from `a` to `b`, any two worlds or moments (`'main@-1 hour'`): what turns `a` into `b` |
+
+Rows:
+
+| Column | Type | |
+|---|---|---|
+| `table` | text | the table (or view, sequence, function, schema) |
+| `id` | text | the row's key; null for a change to the table itself |
+| `change` | text | `insert`, `update`, `delete`; `create table`, `alter table`, `drop table`; `create`/`drop materialized view`; `create`/`drop`/`alter view`; `create`/`drop`/`alter sequence`; `create`/`drop`/`replace function`; `create`/`drop`/`alter schema` |
+| `before` | jsonb | the row before, or null |
+| `after` | jsonb | the row after, or null |
+| `columns` | jsonb | the columns that changed; for a table, what changed in it (`"+email text"`, `"-age"`) |
+
+With `AS SQL`: one column, `sql` (text), one statement per row (`INSERT`, `UPDATE`, `DELETE`, `CREATE`/`ALTER TABLE`, ...). Run them on the other side to make the same change.
+
+```sql
+diff world agent_7;
+diff world 'main@-1 hour' to main as sql;
+```
+
+## MERGE
+
+```
+MERGE WORLD [name] [clause ...]
+MERGE BRANCH [name] [clause ...]
+```
+
+`name` defaults to the session's world. Clauses, in any order:
+
+| Clause | Effect |
+|---|---|
+| `INTO world` | merge into another live world instead of the parent, three-way against `name`'s fork point; `name` stays open |
+| `ONLY TABLES (t, ...)` | merge just those tables; `name` stays open with the rest |
+| `ONLY KEYS ('t/1', ...)` | merge just those rows; `name` stays open with the rest |
+| `[USING] OURS` | a row both sides changed: keep this world's |
+| `[USING] THEIRS` | a row both sides changed: keep the parent's |
+| `BY COLUMNS` | a row both sides changed merges column by column; only a column both changed conflicts |
+| `RESOLVE ('t/1' = OURS \| THEIRS \| DELETE \| '<row as JSON>', ...)` | settle rows one by one |
+| `CONFIRM` | after a crash: merge the world as it is now (check `DIFF` first) |
+| `DRY RUN` | change nothing; see [below](#merge-dry-run) |
+
+- **Default:** a row both sides changed fails the merge with 40001, naming up to 10 rows; nothing is merged.
+- **Order of settling:** `RESOLVE` for its rows, then `BY COLUMNS`, then `USING`.
+- **Afterwards:** a whole merge into the parent drops the world. If it was the session's, the session moves to the parent.
+- **Keys** of several columns are written `'t/(1,abc)'`.
+
+Returns tag `MERGE n`, n the rows applied.
+
+| SQLSTATE | When |
+|---|---|
+| 40001 | rows changed on both sides; or both sides changed one table's columns or constraints |
+| 23505 | both sides added rows with the same unique values |
+| 23503 / 23514 | the merged result breaks a foreign key or `CHECK` |
+| 22023 | `INTO` itself; `ONLY KEYS` given something that isn't `'table/id'`; a row tied (unique value or reference) to one left out; a row of a table the world changed itself (use `ONLY TABLES`) |
+| 55000 | the world was open when the database crashed: `CONFIRM` after checking `DIFF`, or drop it |
+| 0A000 | main has no parent |
+| 3D000 | no such world |
+
+```sql
+merge world agent_7 by columns resolve ('orders/7' = theirs, 'orders/9' = '{"id": 9, "status": "paid"}');
+merge world agent_7 only tables (orders);
+merge world agent_7b into agent_7;
+```
+
+See [concepts](../concepts.md#merging) for three-way merging and [partial merges](../concepts.md#merging-part-of-a-world-or-into-another-world).
+
+### MERGE DRY RUN
+
+```
+MERGE WORLD [name] [clause ...] DRY RUN
+```
+
+What the merge would do with the same clauses, row by row. Changes nothing.
+
+| Column | Type | |
+|---|---|---|
+| `table` | text | |
+| `id` | text | null for a table, view or sequence itself |
+| `outcome` | text | `apply`, `conflict`, `by columns`, `picked ours`, `picked theirs`, `picked row`, `kept ours`, `kept theirs`, or `blocked` |
+| `detail` | text | why: for a conflict, which columns each side changed |
+| `base` | jsonb | the row at the fork point |
+| `ours` | jsonb | this world's row |
+| `theirs` | jsonb | the parent's (or `INTO` world's) row |
+| `result` | jsonb | the row after the merge; null for a conflict |
+
+A last row with outcome `blocked` (and null `table`) means constraints would refuse the merge; `detail` says why.
+
+## UNDO MERGE
+
+```
+UNDO MERGE [OF] [WORLD | BRANCH] name [SKIP CHANGED]
+```
+
+Puts back, in the world it merged into, every row `name`'s latest merge changed, as an ordinary write. `name` is the world that was merged (it's gone; its name still works).
+
+- **Rows changed again since:** 40001, naming up to 10; nothing is undone. `SKIP CHANGED` leaves those and undoes the rest.
+- **History:** the merge must be within the retention window (22023 `no merge of ... within the history window`).
+
+Returns tag `UNDO MERGE n`.
+
+```sql
+undo merge of world agent_7 skip changed;
+```
+
+## AS OF
+
+```
+FROM table AS OF when [alias]
+FROM table [alias] AS OF when
+FROM table FOR SYSTEM_TIME AS OF when
+```
+
+Reads a table as it was, with its schema as it was then; tables dropped since can be read. Works on any table reference in a query, so now and then join in one statement.
+
+```sql
+select now.id, now.status, old.status
+from orders now join orders as of '-1 hour' old on old.id = now.id
+where old.status <> now.status;
+```
+
+A fixed time is rebuilt from history once, then cached. See [concepts](../concepts.md#time-travel).
+
+## RESTORE WORLD
+
+```
+RESTORE WORLD name TO when
+RESTORE WORLD name TO CHECKPOINT 'label'
+```
+
+Writes the world's rows back as they were, as an ordinary write: history keeps what it replaced, and a restore of a fork merges like any change. Returns tag `RESTORE n`, n the rows written.
+
+Errors: 22023 outside history, or no such checkpoint; 22P02 not a time.
+
+```sql
+restore world main to '-10 minutes';
+restore world bot_task to checkpoint 'before';
+```
+
+## CHECKPOINT WORLD
+
+```
+CHECKPOINT WORLD name AS 'label'
+```
+
+Names this moment of the world, for `RESTORE ... TO CHECKPOINT`. The same label again moves it. Checkpoints show in the HTTP `world` op's `checkpoints`. Returns tag `CHECKPOINT`.
+
+This is the SQL statement. The shell's own `checkpoint` command compacts the log instead (see [CLI](cli.md#shell-commands)).
+
+## UNDO AGENT
+
+```
+UNDO AGENT name SINCE when [SKIP CHANGED]
+```
+
+In the session's world, puts back every row agent `name` changed since `when`.
+
+- **Rows someone else changed after the agent:** 40001, naming up to 10; nothing is undone. `SKIP CHANGED` leaves those.
+- **History** must reach back to `when` (22023).
+
+Returns tag `UNDO AGENT n`.
+
+```sql
+undo agent bot since '-2 hours' skip changed;
+```
+
+## SHOW HISTORY
+
+```
+SHOW HISTORY [FOR [WORLD] name] [LIMIT n]
+```
+
+What happened to the world (the session's by default), newest first. `LIMIT` defaults to 100. A dropped world's name still works.
+
+| Column | Type | |
+|---|---|---|
+| `at` | timestamptz | |
+| `world` | text | |
+| `event` | text | `write`, `commit`, `forked from w`, `forked w`, `merged into w`, `merged w`, `merged part into w`, `merged part of w`, `discarded`, `metadata changed` |
+| `rows` | bigint | rows written; for a merge or commit, rows the merged world wrote |
+
+## SIMULATE
+
+```
+SIMULATE n WORLDS [FROM base] AS prefix
+  RUN 'script'
+  SCORE 'select ...'
+  [ASC | DESC] [KEEP k | KEEP ALL] [SEED s] [THREADS t]
+```
+
+Forks `n` worlds (`prefix_0` ... `prefix_{n-1}`) from one moment of `base`, runs the script in each in parallel, scores each, keeps the best and discards the rest. The clauses after `SCORE` go in any order.
+
+| Part | Default | |
+|---|---|---|
+| `FROM base` | the session's world | a world, or `'name@when'` (agents need `restore` for a past moment) |
+| `RUN` | required | any statements; `$1` is the world's index, `$2` its seed. Can't fork, merge, restore, switch or drop worlds, or change settings (0A000) |
+| `SCORE` | required | one `SELECT` whose first value is a number |
+| `DESC` / `ASC` | `DESC` | highest score first / lowest first |
+| `KEEP` | `ALL` | worlds kept, best first |
+| `SEED` | 0 | seeds `random()` and `gen_random_uuid()` with the world's index |
+| `THREADS` | every free core | |
+
+Strings can be dollar-quoted: `$$...$$` or `$tag$...$tag$`.
+
+| Column | Type | |
+|---|---|---|
+| `world` | text | |
+| `id` | text | |
+| `index` | bigint | `$1` |
+| `seed` | bigint | `$2` |
+| `score` | double precision | null if it failed |
+| `error` | text | the failure, with its SQLSTATE |
+| `kept` | boolean | |
+
+Rows are best first; failed worlds last. Kept worlds hold their inputs in metadata `sim` (`seed`, `index`, `script`, `score_query`, `score`, `error`, `base`, `base_id`, `at`).
+
+| SQLSTATE | When |
+|---|---|
+| 22023 | 0 worlds; script and score over 32 KB together; the score isn't one `SELECT` |
+| 54000 | more than 1,048,576 worlds |
+| 42710 | a world named `prefix_i` exists |
+| 53400 | not enough room under `max_worlds` (`KEEP k` needs k + 1 at once; `KEEP ALL` needs n) |
+| 42501 | not enough room under the agent's `max_worlds` |
+| 0A000 | the script leaves its world |
+
+```sql
+simulate 1000 worlds from main as trial
+  run $$update prices set p = p * (0.9 + random() * 0.2) where sku % 100 = $1 % 100$$
+  score $$select sum(p * sold) from prices$$
+  keep 10 seed 42;
+```
+
+Determinism, batching and sizes: [SQL](../sql.md#simulations).
+
+## REPLAY WORLD
+
+```
+REPLAY WORLD world [AS name]
+```
+
+Forks the kept world's base as it was then, runs its script and score again with the same index and seed, and compares. The replay is dropped unless `AS name` keeps it. Needs history back to the simulation's moment.
+
+| Column | Type | |
+|---|---|---|
+| `world` | text | |
+| `replay` | text | the kept replay, or null |
+| `identical` | boolean | same rows and same score (or error) |
+| `rows_differing` | bigint | |
+| `score` | double precision | now |
+| `recorded_score` | double precision | then |
+| `error` | text | |
+
+22023 if the world has no `sim` metadata, or it's incomplete.
+
+## SHOW STORAGE
+
+```
+SHOW STORAGE [FOR [WORLD] name]
+```
+
+What each world (or one) costs on its own.
+
+| Column | Type | |
+|---|---|---|
+| `world` | text | |
+| `rows_changed` | bigint | since its fork; null for main |
+| `pages` | bigint | pages only it holds |
+| `bytes` | bigint | their bytes |
+
+## SHOW DISK
+
+```
+SHOW DISK
+```
+
+Four rows of `what` (text) and `bytes` (bigint): `live` (pages in use), `history` (pages kept only for time travel), `reclaimable` (pages nothing needs), `log`. See [operations](../operations.md#cleanup).
+
+## SHOW METRICS
+
+```
+SHOW METRICS
+```
+
+Columns `metric` (text), `count` (bigint), `total_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms` (double precision). Timed operations first, then counters with null latencies. Names: [operations](../operations.md#metrics).
+
+## History retention
+
+```
+ALTER SYSTEM SET history_retention = '<interval>'
+ALTER SYSTEM SET history_retention TO '0'
+SHOW history_retention
+```
+
+How far back time travel, `RESTORE`, `UNDO MERGE`, `UNDO AGENT`, `SHOW HISTORY` and `REPLAY` reach. Default `30 days`; `'0'` keeps none. Shorter settings free space at the next checkpoint. `SHOW history_retention` returns one `interval`. On an in-memory database: 22023.
+
+## Agents
+
+The statements that manage agents, whose worlds these rights govern:
+
+```
+CREATE AGENT name [WITH (key = value, ...)]      -- name, id, token (shown only now)
+ALTER AGENT name SET (key = value, ...)          -- the agent's row, tag ALTER AGENT
+DROP AGENT name                                  -- tag DROP AGENT; its worlds stay
+SHOW AGENTS                                      -- name, id, can, max_worlds, writes_per_minute, max_changes,
+                                                 -- world_ttl, created, disabled, max_query_ms, max_concurrent, max_memory_mb
+SHOW AUDIT [FOR [AGENT] name] [LIMIT n]          -- at, agent, world, action, rows (LIMIT 100 by default)
+```
+
+| Key | Value | Default |
+|---|---|---|
+| `can` | a list, `'read,fork,write_own'`: `read`, `fork`, `write_own`, `write`, `write_main`, `merge_own`, `merge`, `restore`, `admin` | `read,fork,write_own` |
+| `max_worlds` | live worlds it may own at once | 0 (no limit) |
+| `writes_per_minute` | | 0 (no limit) |
+| `max_changes` | rows each of its worlds may change | 0 (no limit) |
+| `world_ttl` | ms, or an interval string (`'1 day'`) | 0 (until merged or dropped) |
+| `max_query_ms` | ms, or an interval string | 0 (no limit) |
+| `max_concurrent` | statements at once | 0 (no limit) |
+| `max_memory_mb` | working memory per statement | 0 (no limit) |
+| `disabled` | `true` / `false` | `false` |
+
+Names are letters, digits, `_` and `-`; `guest` and `system` are the database's (22023). An unknown key fails with 22P02. Only `admin` may manage agents.

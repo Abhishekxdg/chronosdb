@@ -1,0 +1,15 @@
+name: Feature request
+description: Something Chronos should do for you or your agents
+labels: [enhancement]
+body:
+  - type: textarea
+    id: job
+    attributes:
+      label: What you're trying to do
+      description: The task, and what gets in the way today. A real example beats a proposed API.
+    validations: { required: true }
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: Optional. How you'd like it to work.

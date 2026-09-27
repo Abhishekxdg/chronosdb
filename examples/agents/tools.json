@@ -1,0 +1,189 @@
+[
+  {
+    "name": "chronos_fork",
+    "description": "Create your own branch: an instant private copy of main to work on without affecting anyone. Do this before writing.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "New branch name, e.g. your task id"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "chronos_find",
+    "description": "Search a table: exact filters, text (typo-tolerant) and/or vector similarity. Returns the match count, then the best rows.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Table name, e.g. tasks"
+        },
+        "where": {
+          "type": "object",
+          "description": "Field: value pairs that must all match"
+        },
+        "text": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max rows (default 20)"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "branch": {
+          "type": "string",
+          "description": "Branch to use. Work on your own fork, not main."
+        }
+      },
+      "required": [
+        "table"
+      ]
+    }
+  },
+  {
+    "name": "chronos_get",
+    "description": "Read one row.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Table name, e.g. tasks"
+        },
+        "id": {
+          "type": "string",
+          "description": "Row id within the table"
+        },
+        "branch": {
+          "type": "string",
+          "description": "Branch to use. Work on your own fork, not main."
+        }
+      },
+      "required": [
+        "table",
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "chronos_put",
+    "description": "Create or replace one row (the whole row as a JSON object) on your branch.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Table name, e.g. tasks"
+        },
+        "id": {
+          "type": "string",
+          "description": "Row id within the table"
+        },
+        "record": {
+          "type": "object"
+        },
+        "branch": {
+          "type": "string",
+          "description": "Branch to use. Work on your own fork, not main."
+        }
+      },
+      "required": [
+        "table",
+        "id",
+        "record",
+        "branch"
+      ]
+    }
+  },
+  {
+    "name": "chronos_delete",
+    "description": "Delete one row on your branch.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Table name, e.g. tasks"
+        },
+        "id": {
+          "type": "string",
+          "description": "Row id within the table"
+        },
+        "branch": {
+          "type": "string",
+          "description": "Branch to use. Work on your own fork, not main."
+        }
+      },
+      "required": [
+        "table",
+        "id",
+        "branch"
+      ]
+    }
+  },
+  {
+    "name": "chronos_diff",
+    "description": "What changed on your branch since you forked it. Check this before merging.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string",
+          "description": "Branch to use. Work on your own fork, not main."
+        }
+      },
+      "required": [
+        "branch"
+      ]
+    }
+  },
+  {
+    "name": "chronos_merge",
+    "description": "Publish your branch into main. If someone else changed the same rows, nothing is merged and the conflicts are returned: decide, then retry with resolve 'ours' (keep yours) or 'theirs' (keep main's).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string",
+          "description": "Branch to use. Work on your own fork, not main."
+        },
+        "resolve": {
+          "type": "string",
+          "enum": [
+            "fail",
+            "ours",
+            "theirs"
+          ]
+        }
+      },
+      "required": [
+        "branch"
+      ]
+    }
+  },
+  {
+    "name": "chronos_discard",
+    "description": "Throw your branch and its changes away.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string",
+          "description": "Branch to use. Work on your own fork, not main."
+        }
+      },
+      "required": [
+        "branch"
+      ]
+    }
+  }
+]

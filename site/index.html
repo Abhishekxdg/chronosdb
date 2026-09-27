@@ -1,0 +1,333 @@
+<!doctype html>
+<!--
+  One static page, no build step. Placeholders to fill before publishing (search for them):
+    PRODUCT NAME  "Chronos" is a working name; it appears in <title>, the header and the commands.
+    OWNER/REPO    the GitHub repo in the install and cargo commands.
+    CONTACT       the email address and booking link in the contact section.
+    VIDEO         the demo video file and its captions (site/demo.mp4, site/demo.vtt).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chronos: preview, approve and undo your AI agent's writes</title>
+<meta name="description" content="Your agent's writes land in a copy of your database first. You read the diff, approve it, and can undo it.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&family=Public+Sans:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #EEF2F5;
+    --card: #FFFFFF;
+    --ink: #15202B;
+    --muted: #566575;
+    --line: #D3DBE3;
+    --add: #1E7A52;
+    --add-bg: #E3F3EB;
+    --del: #B42339;
+    --del-bg: #FBE6EA;
+    --act: #3548D4;
+    --act-ink: #FFFFFF;
+    --warn-bg: #FFF4D6;
+    --warn-ink: #6B4B00;
+    --display: "Familjen Grotesk", system-ui, sans-serif;
+    --body: "Public Sans", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0E151C;
+      --card: #16202A;
+      --ink: #E4EBF1;
+      --muted: #97A6B4;
+      --line: #2A3845;
+      --add: #5FCB98;
+      --add-bg: #133526;
+      --del: #F2849A;
+      --del-bg: #3D1822;
+      --act: #8C9BFF;
+      --act-ink: #0E151C;
+      --warn-bg: #3A2F12;
+      --warn-ink: #F3D98E;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 17px/1.6 var(--body);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--act); }
+  :focus-visible { outline: 3px solid var(--act); outline-offset: 2px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+  code, pre, .mono { font-family: var(--mono); font-size: 0.86em; }
+
+  header.top { display: flex; justify-content: space-between; align-items: center; padding: 22px 0; }
+  .wordmark { font: 700 1.25rem/1 var(--display); letter-spacing: -0.01em; }
+  .wordmark span { color: var(--muted); font-weight: 500; }
+  .pill { font-size: 0.8rem; background: var(--warn-bg); color: var(--warn-ink); padding: 4px 10px; border-radius: 999px; }
+
+  .hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 56px; align-items: center; padding: 48px 0 72px; }
+  h1 {
+    font: 700 clamp(2.4rem, 5.2vw, 4rem)/1.02 var(--display);
+    letter-spacing: -0.03em;
+    margin: 0 0 20px;
+  }
+  h1 em { font-style: normal; color: var(--act); }
+  .sub { font-size: 1.15rem; color: var(--muted); max-width: 34em; margin: 0 0 28px; }
+
+  .cmd {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 10px 10px 16px; max-width: 100%;
+  }
+  .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 4px 0; }
+  .cmd code::before { content: "$ "; color: var(--muted); }
+  button {
+    font: 600 0.9rem/1 var(--body); cursor: pointer; border-radius: 8px;
+    padding: 10px 14px; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  }
+  button.primary { background: var(--act); color: var(--act-ink); border-color: var(--act); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  .small { font-size: 0.88rem; color: var(--muted); margin-top: 10px; }
+
+  /* the signature: a live review of the agent's change */
+  .review { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+            box-shadow: 0 1px 0 var(--line), 0 18px 40px -24px rgba(21, 32, 43, 0.35); }
+  .review .bar { display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+                 padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  .review .bar strong { font: 700 1rem/1.3 var(--display); }
+  .state { font: 600 0.78rem/1 var(--mono); padding: 5px 8px; border-radius: 6px; white-space: nowrap;
+           background: var(--warn-bg); color: var(--warn-ink); }
+  .state[data-s="merged"] { background: var(--add-bg); color: var(--add); }
+  .state[data-s="undone"] { background: var(--line); color: var(--ink); }
+  .count { padding: 14px 18px 4px; font: 700 2rem/1 var(--display); letter-spacing: -0.02em; }
+  .count small { font: 400 0.95rem var(--body); color: var(--muted); letter-spacing: 0; }
+  .rows { margin: 10px 0 0; padding: 0 18px 12px; list-style: none; font-family: var(--mono); font-size: 0.8rem; }
+  .rows li { padding: 6px 0; border-top: 1px dashed var(--line); display: grid; grid-template-columns: 7.5em 1fr; gap: 8px; }
+  .rows .k { color: var(--muted); }
+  .del { color: var(--del); background: var(--del-bg); padding: 0 4px; border-radius: 3px; }
+  .add { color: var(--add); background: var(--add-bg); padding: 0 4px; border-radius: 3px; }
+  .rows[data-s="undone"] .add { text-decoration: line-through; opacity: 0.6; }
+  .refused { margin: 0 18px; padding: 10px 12px; border-radius: 8px; font-size: 0.85rem; background: var(--paper); }
+  .refused b { color: var(--del); }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; padding: 16px 18px; }
+  .log { white-space: pre-line; min-height: 3.2em; padding: 0 18px 16px; font: 0.8rem/1.5 var(--mono); color: var(--muted); }
+
+  section { padding: 64px 0; border-top: 1px solid var(--line); }
+  h2 { font: 700 clamp(1.6rem, 3vw, 2.2rem)/1.1 var(--display); letter-spacing: -0.02em; margin: 0 0 10px; }
+  .lede { color: var(--muted); max-width: 40em; margin: 0 0 32px; }
+
+  /* the demo, as it happens: two lanes, one sequence */
+  ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+  ol.steps li { counter-increment: step; display: grid; grid-template-columns: 2.4em 7.5em minmax(0, 1fr); gap: 14px;
+                padding: 14px 0; border-top: 1px solid var(--line); align-items: baseline; }
+  ol.steps li::before { content: counter(step); font: 700 1rem var(--display); color: var(--muted); }
+  .who { font: 600 0.75rem/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.06em; }
+  .who.agent { color: var(--act); }
+  .who.you { color: var(--add); }
+  ol.steps pre { margin: 6px 0 0; white-space: pre-wrap; color: var(--muted); }
+  .no { color: var(--del); font-weight: 600; }
+
+  .video { aspect-ratio: 16 / 9; background: var(--card); border: 1px dashed var(--line); border-radius: 14px;
+           display: grid; place-items: center; text-align: center; color: var(--muted); padding: 20px; }
+  .video video { width: 100%; height: 100%; border-radius: 14px; }
+
+  .try { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .try div { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .try h3 { font: 700 1.05rem/1.2 var(--display); margin: 0 0 8px; }
+  .try pre { background: var(--paper); border-radius: 8px; padding: 10px; overflow-x: auto; margin: 10px 0 0; font-size: 0.78rem; }
+  .try p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+
+  .notice { background: var(--warn-bg); color: var(--warn-ink); border-radius: 12px; padding: 18px 20px; }
+  .notice strong { display: block; font: 700 1.1rem var(--display); margin-bottom: 4px; }
+
+  .contact { display: flex; gap: 12px; flex-wrap: wrap; }
+  .contact a { text-decoration: none; }
+  .contact a.primary { background: var(--act); color: var(--act-ink); padding: 12px 18px; border-radius: 10px; font-weight: 600; }
+  .contact a.plain { border: 1px solid var(--line); padding: 12px 18px; border-radius: 10px; font-weight: 600; background: var(--card); }
+  footer { padding: 28px 0 48px; color: var(--muted); font-size: 0.85rem; }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: minmax(0, 1fr); gap: 36px; padding-top: 20px; }
+    .try { grid-template-columns: minmax(0, 1fr); }
+    ol.steps li { grid-template-columns: 2em minmax(0, 1fr); }
+    ol.steps li .who { grid-column: 2; }
+    ol.steps li > div { grid-column: 2; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .rows li { transition: background-color 0.3s ease, opacity 0.3s ease; }
+    .state { transition: background-color 0.3s ease, color 0.3s ease; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="wordmark">Chronos <span>DB</span></div>
+    <span class="pill">Early: try it on a copy</span>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div>
+        <h1>Preview, approve and <em>undo</em> your AI agent's writes.</h1>
+        <p class="sub">Your agent's changes land in a private copy of the database first. You read the diff,
+          approve it with one command, and can take it back afterwards. It speaks Postgres SQL, and forking a copy takes microseconds.</p>
+        <div class="cmd">
+          <code id="install">curl -fsSL https://github.com/OWNER/REPO/releases/latest/download/install.sh | sh</code>
+          <button type="button" data-copy="install">Copy</button>
+        </div>
+        <p class="small">macOS and Linux. Checks the download's SHA-256 and installs to ~/.local/bin.</p>
+      </div>
+
+      <div class="review" aria-labelledby="review-title">
+        <div class="bar">
+          <strong id="review-title">churn-cleanup → main</strong>
+          <span class="state" id="state" data-s="proposed" aria-live="polite">waiting for you</span>
+        </div>
+        <div class="count">1,240 <small>customers change</small></div>
+        <ul class="rows" id="rows" data-s="proposed">
+          <li><span class="k">customers/2</span><span>status <span class="del">active</span> → <span class="add">churned</span></span></li>
+          <li><span class="k">customers/17</span><span>status <span class="del">active</span> → <span class="add">churned</span></span></li>
+          <li><span class="k">customers/31</span><span>status <span class="del">active</span> → <span class="add">churned</span></span></li>
+          <li><span class="k">customers/48</span><span>status <span class="del">active</span> → <span class="add">churned</span></span></li>
+        </ul>
+        <p class="refused"><b>Merge refused:</b> the agent tried to merge its own change. Only you can.</p>
+        <div class="actions">
+          <button type="button" class="primary" id="approve">Approve and merge</button>
+          <button type="button" id="undo" disabled>Undo</button>
+        </div>
+        <p class="log mono" id="log" aria-live="polite">$ chronos mydb diff churn-cleanup</p>
+      </div>
+    </div>
+
+    <section aria-labelledby="demo-title">
+      <h2 id="demo-title">What happens, step by step</h2>
+      <p class="lede">An agent is asked to "mark every customer inactive for 90 days as churned". It works through MCP,
+        where it can read anything but can only change a copy it made. You approve in the shell.</p>
+      <ol class="steps">
+        <li><span class="who agent">Agent</span><div>Tries the change on the real table.
+          <pre><span class="no">refused:</span> changes need branch="&lt;a branch you forked&gt;". Call fork first</pre></div></li>
+        <li><span class="who agent">Agent</span><div>Forks its own copy, a world called churn-cleanup. Nothing is copied, so it takes microseconds.</div></li>
+        <li><span class="who agent">Agent</span><div>Runs one statement in its world.
+          <pre>update customers set status = 'churned' where last_active &lt; current_date - 90
+UPDATE 1240</pre></div></li>
+        <li><span class="who agent">Agent</span><div>Tries to merge it.
+          <pre><span class="no">refused:</span> agents can't merge. A person reviews your diff and merges it</pre></div></li>
+        <li><span class="who you">You</span><div>Read what changed, row by row.
+          <pre>$ chronos mydb diff churn-cleanup
+1240 changes on churn-cleanup
+~ customers/2  status: "active" -> "churned"</pre></div></li>
+        <li><span class="who you">You</span><div>Approve it.
+          <pre>$ chronos mydb merge churn-cleanup
+merged 1240 changes from churn-cleanup into main</pre></div></li>
+        <li><span class="who you">You</span><div>Change your mind. Undo puts back exactly the rows the merge changed and keeps everything else.
+          <pre>$ chronos mydb undo
+undid the merge of churn-cleanup into main: put back 1240 rows</pre></div></li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="video-title">
+      <h2 id="video-title">The three-minute version</h2>
+      <p class="lede">The same demo, recorded, with nothing staged.</p>
+      <div class="video">
+        <!-- VIDEO: replace this paragraph with
+          <video controls preload="metadata" src="demo.mp4"><track kind="captions" src="demo.vtt" srclang="en" label="English" default></video> -->
+        <p>Video coming soon. The steps above are the whole demo.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="try-title">
+      <h2 id="try-title">Try it on one of your tables</h2>
+      <p class="lede">Copy one Postgres table in. Your database isn't touched: the copy is a file on your machine.</p>
+      <div class="try">
+        <div>
+          <h3>Export the rows</h3>
+          <p>Plain CSV from psql.</p>
+          <pre>psql -c "\copy customers to 'data.csv' csv header"</pre>
+        </div>
+        <div>
+          <h3>Export the columns</h3>
+          <p>Running <code>chronos import</code> with no arguments prints the exact psql command for the column list.</p>
+          <pre>psql --csv -t -c "select …" &gt; schema.csv</pre>
+        </div>
+        <div>
+          <h3>Import, then point your agent at it</h3>
+          <p>The whole import succeeds, or you get the line and column that failed.</p>
+          <pre>chronos import mydb customers data.csv --schema schema.csv
+claude mcp add db -- chronos mcp mydb</pre>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="notice-title">
+      <div class="notice" role="note">
+        <strong id="notice-title">Not for production data yet</strong>
+        This is early. Try it on a copy of a table, not the database your customers use.
+      </div>
+    </section>
+
+    <section aria-labelledby="contact-title">
+      <h2 id="contact-title">Building an agent that changes real data?</h2>
+      <p class="lede">I'd like to hear what the scariest write your agent does is, and how you check it today. Twenty minutes, no pitch.</p>
+      <div class="contact">
+        <a class="primary" href="https://cal.com/CONTACT">Book 20 minutes</a>
+        <a class="plain" href="mailto:CONTACT@example.com">Email me</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>Chronos DB is a working name. Source available under the Business Source License.</footer>
+</div>
+
+<script>
+  // copy buttons
+  document.querySelectorAll("[data-copy]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const text = document.getElementById(b.dataset.copy).textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        b.textContent = "Copied";
+      } catch {
+        b.textContent = "Select and copy";
+      }
+      setTimeout(() => (b.textContent = "Copy"), 1800);
+    });
+  });
+
+  // the review card: waiting for you -> merged -> undone, as in the shell
+  const state = document.getElementById("state");
+  const rows = document.getElementById("rows");
+  const log = document.getElementById("log");
+  const approve = document.getElementById("approve");
+  const undo = document.getElementById("undo");
+  const set = (s, label, line) => {
+    state.dataset.s = s;
+    rows.dataset.s = s;
+    state.textContent = label;
+    log.textContent = line;
+  };
+  approve.addEventListener("click", () => {
+    if (state.dataset.s === "undone") {
+      set("proposed", "waiting for you", "$ chronos mydb diff churn-cleanup");
+      approve.textContent = "Approve and merge";
+      return;
+    }
+    set("merged", "merged", "$ chronos mydb merge churn-cleanup\nmerged 1240 changes into main");
+    approve.disabled = true;
+    undo.disabled = false;
+    undo.focus();
+  });
+  undo.addEventListener("click", () => {
+    set("undone", "undone", "$ chronos mydb undo\nput back 1240 rows");
+    undo.disabled = true;
+    approve.textContent = "Start over";
+    approve.disabled = false;
+    approve.focus();
+  });
+</script>
+</body>
+</html>
