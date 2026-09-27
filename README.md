@@ -456,8 +456,8 @@ Chronos DB is a **working engine at v0.1**, about to be released, and not yet us
 - [x] Chronos Studio, built in: worlds and the worldline, data grid with in-place editing, import and export, schema diagram, SQL, hybrid and vector search with a map of the vector space, changes and merges, history and checkpoints, simulations, agents, settings
 - [x] Fixes from three full code reviews: parser and regex recursion limits, caps on user-controlled sizes, lock poisoning after a panic, Origin and Host checks on the loopback HTTP API, hardened spill files
 - [ ] **Now:** first tagged release (v0.1.0): signed binaries for macOS and Linux
-- [ ] **Next:** a plain scan's memory stays flat as tables grow (today ~70 MB at 4M rows, ~200 MB at 10M)
-- [ ] Faster bulk vector ingest (`COPY FROM STDIN` with binary vectors; 20 s vs LanceDB 2 s today)
+- [x] A plain scan's memory stays flat as tables grow: a `count(*)` or `sum` needs +6 to +8 MB at 1M to 10M rows (it was +63 MB at 10M, and RSS 250 MB is now 107 MB). What still grows is the page directory an open database keeps, about 3 MB per million narrow rows
+- [ ] **Next:** faster bulk vector ingest (`COPY FROM STDIN` with binary vectors; 20 s vs LanceDB 2 s today)
 - [ ] A fourth full code review, before an outside one
 - [ ] Neon branching benchmark (Dolt and DuckDB done; waiting on a Neon API key)
 - [ ] Outside review of the storage code, design partners

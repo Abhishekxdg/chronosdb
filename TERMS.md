@@ -1,6 +1,6 @@
 # Chronos DB binary license
 
-Copyright (c) 2026 Yuvaraj Gowda. All rights reserved.
+Copyright (c) 2026 Abhishek DG. All rights reserved.
 
 These terms cover the `chronos` binaries published in this repository's releases
 (the "Software"). The source in this repository (the Studio, the clients, the docs
