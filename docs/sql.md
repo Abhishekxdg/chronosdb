@@ -729,7 +729,7 @@ days) plus their schema files, ready for `chronos import`.
 
 ## Speed
 
-- **Lookups by primary key** read one row; `key IN (...)` reads each, and so does a range on an integer key (`BETWEEN`, `<`, `>`) up to 100,000 keys wide (wider ones scan the table). A range on a text key reads just the rows in it, however wide: text keys are stored in the order SQL compares them.
+- **Lookups by primary key** read one row, and `key IN (...)` reads each. A range on the key (`BETWEEN`, `<`, `>`, one-sided too) reads just the rows in it, however wide: keys are stored in the order SQL compares them, integers as numbers and text as text. Tables made with 0.1.0 or before keep integer keys as their digits: there a range on one is read key by key up to 100,000 keys wide, and wider ones scan the table.
 - **B-tree indexes** answer the conditions above (see [Indexes](#indexes)).
 - **`column = value` conditions** on integer, bigint, text or boolean columns with no B-tree index (joined by `AND`) use the search index the rest of Chronos already keeps for the table. The rest of the `WHERE` is checked on the rows the index finds. It's built on first use and updated incrementally, per branch. It holds the table in memory, several times over (about ten times, for long unique text), so a query builds it only for tables whose rows fit in an eighth of `CHRONOS_WORK_MEM` (32 MB by default); bigger tables are scanned, unless a search already built their index.
 - **Unique checks** (`UNIQUE`, `ON CONFLICT`) look up the constraint's own entry: one read, whatever the table's size.

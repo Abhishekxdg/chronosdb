@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+**Integer keys in number order**
+- **Tables made from now on store an integer primary key in number order,** so a range of ids is one read of the tree: `WHERE id > 1000` no longer scans the table, and `BETWEEN` no longer looks keys up one by one (it did for ranges under 100,000 keys). Rows without `ORDER BY` come back in id order (1, 2, 10), not as text (1, 10, 2). Tables made before keep their keys as they are.
+- People still see and type `t/7` everywhere: diffs, conflicts, `UNDO` messages, `ONLY KEYS`, the shell, the HTTP API, MCP, `search()` and the key-value API (`db.get("t/7")`; a key is written as its number, so `t/007` is refused, as before).
+- **A big statement's parts in key order go straight into the new tree**, instead of through sorted spill files first: a load in id order, and an `UPDATE` of values (it reads in key order). A binary COPY of 76,424 × 1,536 embeddings writes 526 MB instead of 1,057 MB (1,816 MB before 0.1.0's streaming COPY), with 7–8 s of server CPU, in about 10 s instead of 16–23 s.
+
 ## 0.1.0 (2026-09-27)
 
 The first release: signed binaries for macOS and Linux (x86_64 and arm64), installed by
