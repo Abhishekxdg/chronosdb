@@ -9,11 +9,11 @@ It speaks **Postgres**, searches **filters, text and vectors** in one query, and
 
 <br>
 
-![status](https://img.shields.io/badge/status-v0.1%20preview-f59e0b?style=flat-square)
+![status](https://img.shields.io/badge/status-v0.1.1%20preview-f59e0b?style=flat-square)
 ![rust](https://img.shields.io/badge/rust-1.90%2B-b7410e?style=flat-square&logo=rust&logoColor=white)
 ![postgres wire](https://img.shields.io/badge/postgres-wire%20protocol-336791?style=flat-square&logo=postgresql&logoColor=white)
 ![mcp](https://img.shields.io/badge/MCP-ready-7c3aed?style=flat-square)
-![tests](https://img.shields.io/badge/tests-350%2B%20passing-16a34a?style=flat-square)
+![tests](https://img.shields.io/badge/tests-560%2B%20passing-16a34a?style=flat-square)
 ![license](https://img.shields.io/badge/license-BUSL--1.1-64748b?style=flat-square)
 
 [**Docs site**](https://abhishekxdg.github.io/chronosdb/) ·
@@ -431,7 +431,7 @@ Also measured: **Monte Carlo Tree Search** where every tree node is a world (Con
 
 | Check | What it does | Result |
 |---|---|---|
-| **Test suite** | 42 integration suites + unit tests, run on Linux | **350+ passed, 0 failed** |
+| **Test suite** | 71 integration suites + unit and doc tests, run in CI on Linux | **563 passed, 0 failed** (7 ignored) |
 | **Crash suite** | Cuts the log at random bytes with torn writes, then recovers (`CRASH_RUNS=10000`) | 10,000 / 10,000 recover exactly what reached disk |
 | **Deterministic simulation** | [shuttle](https://github.com/awslabs/shuttle) explores concurrent schedules of agents, writes, checkpoints and GC | Passes 3,000 schedules; failing schedules replay exactly |
 | **Jepsen-style** | `kill -9` the server during concurrent fork/merge bank transfers | 300 kills, 108,178 transfers, none lost, every balance matches |
@@ -445,7 +445,7 @@ The Jepsen-style test found two real bugs before this release (money created by 
 
 ## Status and roadmap
 
-Chronos DB is a **working engine at v0.1**, about to be released, and not yet used in production.
+Chronos DB is a **working engine**, released as [v0.1.1](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.1) on 2026-09-27, and not yet used in production.
 
 - [x] Worlds: fork, diff, three-way merge, partial merges, time travel, undo
 - [x] Postgres wire protocol and a broad SQL surface, checked against Postgres 17
@@ -457,12 +457,14 @@ Chronos DB is a **working engine at v0.1**, about to be released, and not yet us
 - [x] Parallel execution and spill to disk
 - [x] Bounded memory for big work: `CREATE INDEX` / `ADD UNIQUE`, one big `INSERT` / `UPDATE` / `DELETE` / `COPY` (atomic), `DISTINCT` aggregates
 - [x] Chronos Studio, built in: worlds and the worldline, data grid with in-place editing, import and export, schema diagram, SQL, hybrid and vector search with a map of the vector space, changes and merges, history and checkpoints, simulations, agents, settings
-- [x] Fixes from three full code reviews: parser and regex recursion limits, caps on user-controlled sizes, lock poisoning after a panic, Origin and Host checks on the loopback HTTP API, hardened spill files
-- [ ] **Now:** first tagged release (v0.1.0): signed binaries for macOS and Linux
+- [x] Fixes from four full code reviews: parser and regex recursion limits, caps on user-controlled sizes, lock poisoning after a panic, Origin and Host checks on the loopback HTTP API, hardened spill files
+- [x] First tagged release, [v0.1.0](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.0): signed binaries for macOS and Linux
+- [x] [v0.1.1](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.1): merge policies, the sqllogictest correctness run and its fixes, and the fourth review's fixes
 - [x] A plain scan's memory stays flat as tables grow: a `count(*)` or `sum` needs +6 to +8 MB at 1M to 10M rows (it was +63 MB at 10M, and RSS 250 MB is now 107 MB). What still grows is the page directory an open database keeps, about 3 MB per million narrow rows
-- [ ] **Next:** faster bulk vector ingest (`COPY FROM STDIN` with binary vectors; 20 s vs LanceDB 2 s today)
-- [ ] A fourth full code review, before an outside one
-- [ ] Neon branching benchmark (Dolt and DuckDB done; waiting on a Neon API key)
+- [x] Bulk vector ingest: `COPY FROM STDIN (FORMAT binary)` with pgvector's binary vectors, COPY streaming into its INSERT, vectors stored 7 bits to a character. Loading 76k embeddings is now bound by the disk, not the protocol (it decodes them all in 0.7 s); LanceDB's 2 s load doesn't wait for the disk (no fsync)
+- [x] Write less per vector load: integer keys are stored in number order (tables made from now on), so a load in id order goes straight into the tree. A binary COPY of 76k embeddings writes 526 MB (it was 1.82 GB) in 8–15 s
+- [x] Bulk loads write once: COPY, `INSERT ... SELECT` or a big `INSERT` skip the log. Many small transactions write each row twice (the log, then the tree), as Postgres does: 1.27 GB for the same 76k embeddings (see [Loading and unloading](docs/sql.md#loading-and-unloading-copy))
+- [x] Neon branching benchmark: a Neon branch is ready in 2.3–3.7 s (p50) against Chronos's 0.1–0.2 ms fork in the same harness, and 10 to 100 agents write 0.8k–1.1k rows/s against 270k
 - [ ] Outside review of the storage code, design partners
 
 See [CHANGELOG.md](CHANGELOG.md) for everything that has shipped, and [SECURITY.md](SECURITY.md) to report a vulnerability.
