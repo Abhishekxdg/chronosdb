@@ -504,7 +504,7 @@ CREATE AGENT name [WITH (key = value, ...)]      -- name, id, token (shown only 
 ALTER AGENT name SET (key = value, ...)          -- the agent's row, tag ALTER AGENT
 DROP AGENT name                                  -- tag DROP AGENT; its worlds stay
 SHOW AGENTS                                      -- name, id, can, max_worlds, writes_per_minute, max_changes,
-                                                 -- world_ttl, created, disabled, max_query_ms, max_concurrent, max_memory_mb
+                                                 -- world_ttl, created, disabled, max_query_ms, max_concurrent, max_memory_mb, policy
 SHOW AUDIT [FOR [AGENT] name] [LIMIT n]          -- at, agent, world, action, rows (LIMIT 100 by default)
 ```
 
@@ -519,5 +519,52 @@ SHOW AUDIT [FOR [AGENT] name] [LIMIT n]          -- at, agent, world, action, ro
 | `max_concurrent` | statements at once | 0 (no limit) |
 | `max_memory_mb` | working memory per statement | 0 (no limit) |
 | `disabled` | `true` / `false` | `false` |
+| `policy` | a merge policy's name (see below); `null` for none | none |
 
 Names are letters, digits, `_` and `-`; `guest` and `system` are the database's (22023). An unknown key fails with 22P02. Only `admin` may manage agents.
+
+### Merge policies
+
+A person can't approve every change once agents make thousands of them. So people approve rules
+instead (walkthrough: the [merge policies guide](../guides/merge-policies.md)): an agent that may merge (`merge_own` or `merge`) and keeps to a merge policy merges on its
+own when the merge keeps to the rules, and is refused (42501) when it breaks any. The refused world
+stays, queued for a person in `SHOW REVIEWS`; the person merges it, or drops it. The rules are
+checked inside the merge, on the rows it's about to apply, so what's checked is what merges even
+while the world and its parent keep changing.
+
+```
+CREATE MERGE POLICY name [WITH (key = value, ...)]  -- the policy's row, tag CREATE MERGE POLICY
+ALTER MERGE POLICY name SET (key = value, ...)      -- the keys named change; the rest stay
+DROP MERGE POLICY name                              -- refused (22023) while an agent keeps to it
+SHOW MERGE POLICIES                                 -- name, max_rows, max_deletes, tables, review_tables,
+                                                    -- schema, overwrite, created
+SHOW REVIEWS                                        -- world, owner, policy, reasons, asked, version,
+                                                    -- changed_since (written to since the agent asked)
+ALTER AGENT name SET (policy = 'name')              -- or policy = null
+```
+
+| Rule | A merge needs a person when | Default |
+|---|---|---|
+| `max_rows` | it changes more rows than this | `null` (no limit) |
+| `max_deletes` | it deletes more rows than this (`0`: any delete) | `null` (no limit) |
+| `tables` | it changes a table not in this list (`'orders,items'`) | any table |
+| `review_tables` | it changes any table in this list | none |
+| `schema` | `false` and it changes a table itself, a view, function, sequence, schema or type | `false` |
+| `overwrite` | `false` and it overwrites rows its parent changed since the fork (`MERGE ... OURS`, picked rows; rows combined `BY COLUMNS` don't count) | `false` |
+
+An agent keeping to a policy changes `main` only by merging: a direct write there, `RESTORE`,
+`UNDO MERGE` or `UNDO AGENT` is refused (42501), since it would skip the rules. Rules count the
+rows a merge applies (a row settled `USING THEIRS` changes nothing), and read table names as SQL
+does: unquoted names fold to lowercase, `'orders,"Orders"'` names two tables. Merges into other worlds are checked too.
+An agent's `MERGE ... DRY RUN` shows a `blocked` row when its merge would need a person. To try
+rules on a world before an agent keeps to them, use MCP's `check_merge_policy`. Only
+`admin` may manage policies; any agent may `SHOW MERGE POLICIES` and `SHOW REVIEWS`. A person, or an
+agent without a policy, merges as its rights alone decide.
+
+```sql
+CREATE MERGE POLICY small WITH (max_rows = 500, max_deletes = 0, review_tables = 'payments');
+ALTER AGENT bot SET (can = 'read,fork,write_own,write_main,merge_own', policy = 'small');
+-- bot: small changes to orders merge on their own; a bulk update or any change to payments waits
+SHOW REVIEWS;
+MERGE WORLD bot_world;   -- a person approves
+```

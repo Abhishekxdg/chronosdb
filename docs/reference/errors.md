@@ -129,7 +129,7 @@ A merge that would break a constraint, though each side was valid alone, fails w
 
 | Code | Meaning | Typical causes |
 |---|---|---|
-| 42501 | insufficient privilege | **an agent may not:** it lacks the capability (`agent x may not ...: it needs 'merge'`), the world isn't its own, it's past its own `max_worlds` or its world's `max_changes`, it's disabled, or no agent has the token; safe mode's guest doing more than forking and changing its own worlds; tables starting `_sonos`; `COPY` to or from a server file or program |
+| 42501 | insufficient privilege | **an agent may not:** it lacks the capability (`agent x may not ...: it needs 'merge'`), the world isn't its own, it's past its own `max_worlds` or its world's `max_changes`, it's disabled, or no agent has the token; safe mode's guest doing more than forking and changing its own worlds; a merge its agent's [merge policy](../guides/merge-policies.md) sends to a person (`merging w needs a person's review (merge policy p: it ...)`), or a direct write to main by an agent keeping to one; tables starting `_sonos`; `COPY` to or from a server file or program |
 | 42601 | syntax error | SQL that doesn't parse; an unquoted world name with a dash (`task-1`); an unknown `SHOW` |
 | 42602 | invalid name | a world name that is empty or contains `@` |
 | 42939 | reserved name | a world name starting `_tx_` (transactions use those); a schema name starting `pg_` |

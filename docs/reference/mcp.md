@@ -14,9 +14,9 @@ claude mcp add chronos -- chronos mcp /path/to/mydb
 
 | Command | Acts as | Tools listed | Changes |
 |---|---|---|---|
-| `chronos mcp mydb` | [safe mode](#safe-mode) (the default) | 17: all but `merge`, `restore`, `undo_merge` | only worlds forked in this session |
+| `chronos mcp mydb` | [safe mode](#safe-mode) (the default) | 22: all but `merge`, `restore`, `undo_merge` | only worlds forked in this session |
 | `chronos mcp mydb --agent bot` | the agent `bot` | those `bot` has the rights for ([below](#as-an-agent)) | what `bot` may change; its forks stay its own across sessions |
-| `chronos mcp mydb --allow-merge` | the database's own user | all 20 | everything |
+| `chronos mcp mydb --allow-merge` | the database's own user | all 25 | everything |
 
 - **`--agent` wins:** with both `--agent` and `--allow-merge`, the session acts as the agent.
 - **`--agent` takes a name, not a token:** an unknown or disabled agent is refused at start (`chronos: ...`, exit 1). Anyone who can run `chronos mcp` on the folder can name any agent; see [security](../security.md).
@@ -97,6 +97,11 @@ Every tool that reads or writes rows takes `branch` (string, default `main`). A 
 | [`discard`](#discard) | throw a branch away | on its own worlds |
 | [`simulate`](#simulate) | fork, run and score many worlds | yes; kept worlds are its own |
 | [`replay`](#replay) | re-run a simulated world | yes |
+| [`merge_policies`](#merge_policies) | the rules agents' merges keep to, and who keeps to each | yes |
+| [`check_merge_policy`](#check_merge_policy) | try rules on a branch's real changes | yes |
+| [`set_merge_policy`](#set_merge_policy) | create or change a policy, give it to agents | drafts the SQL for a person |
+| [`drop_merge_policy`](#drop_merge_policy) | remove a policy | drafts the SQL for a person |
+| [`reviews`](#reviews) | merges waiting for a person | yes |
 
 ### describe
 
@@ -318,6 +323,60 @@ Makes a simulated world again from its recorded inputs and says whether it comes
 
 Returns `<world>: identical (0 rows differ; score <s> now, <s> recorded)`, with `; failed: <why>` and `; kept as <name>` when they apply.
 
+### merge_policies
+
+The [merge policies](../guides/merge-policies.md): the rules under which an agent's merge goes through without a person. A psql-style table (`name`, `max_rows`, `max_deletes`, `tables`, `review_tables`, `schema`, `overwrite`, `created`), then a line per agent keeping to one (`agent bot keeps to small`), or `no agent keeps to a merge policy`. No parameters. Runs [`SHOW MERGE POLICIES`](worlds.md#merge-policies).
+
+### check_merge_policy
+
+Tries rules on a branch's real changes before any agent keeps to them: would its merge go through on its own, or wait for a person, and why. Give a policy's `name`, `rules`, or both: the rules change the named policy's for this check only, so "what if `max_rows` were 1000?" is one call. Nothing is saved.
+
+| Parameter | Type | Required | Default |
+|---|---|---|---|
+| `branch` | string | yes | |
+| `name` | string | no | none: only `rules` (and the defaults for the rest) |
+| `rules` | object | no | none; as for [`set_merge_policy`](#set_merge_policy) |
+
+Returns `draft's merge would go through on its own under those rules`, or `draft's merge would wait for a person under merge policy small: it changes 3 rows (at most 2)` (each broken rule, joined with `; it `). Rows both sides changed aren't a rule: see them with [`merge_preview`](#merge_preview).
+
+### set_merge_policy
+
+Creates a merge policy, or changes the rules given of an existing one (the others stay), and has `agents` keep to it. Runs `CREATE`/`ALTER MERGE POLICY` and `ALTER AGENT ... SET (policy = ...)` as one call, so an agent needs `admin` (it isn't listed otherwise). In [safe mode](#safe-mode) nothing changes: the reply (`isError: true`) is the SQL for a person to run, so an agent can draft rules and a person applies them.
+
+| Parameter | Type | Required | Default |
+|---|---|---|---|
+| `name` | string | yes | letters, digits, `_` and `-` |
+| `rules` | object | no | none (a new policy gets every default) |
+| `agents` | array of strings | no | none; agents to keep to it from now on |
+
+| Rule | Type | A merge needs a person when | Default |
+|---|---|---|---|
+| `max_rows` | integer or `null` | it changes more rows than this | `null`: no limit |
+| `max_deletes` | integer or `null` | it deletes more rows than this; `0`: any delete | `null`: no limit |
+| `tables` | array of strings | it changes a table not in the list | `[]`: any table |
+| `review_tables` | array of strings | it changes any table in the list | `[]` |
+| `schema` | boolean | `false` and it changes a table itself, a view, function, sequence, schema or type | `false` |
+| `overwrite` | boolean | `false` and it overwrites rows its parent changed since the fork | `false` |
+
+An unknown rule, or a value of the wrong type, is refused with the rules' names. Returns the policy as a table.
+
+```json
+{"name": "small", "rules": {"max_rows": 500, "max_deletes": 0, "review_tables": ["payments"]}, "agents": ["bot"]}
+```
+
+### drop_merge_policy
+
+Removes a merge policy. Refused while an agent keeps to it, unless `release_agents`. Needs `admin`; in safe mode, drafts the SQL like `set_merge_policy`.
+
+| Parameter | Type | Required | Default |
+|---|---|---|---|
+| `name` | string | yes | |
+| `release_agents` | boolean | no | `false`; `true`: first take the policy from its agents (their rights alone decide then) |
+
+### reviews
+
+Merges a policy sent to a person, oldest first: `world`, `owner`, `policy`, `reasons`, `asked`, `version`, `changed_since` (the branch was written to after its agent asked). A person approves with `merge` (or `MERGE WORLD`), or throws it away with `discard`. No parameters. Runs [`SHOW REVIEWS`](worlds.md#merge-policies).
+
 ## Safe mode
 
 The default, without `--allow-merge` or `--agent`. The agent reads every world and forks; a person approves.
@@ -328,6 +387,7 @@ The default, without `--allow-merge` or `--agent`. The agent reads every world a
 - **World statements in `sql`** are refused on any branch: forking, merging, restoring, dropping or switching worlds, and changing system settings (`safe mode: agents can't fork, merge, restore, drop or switch worlds in SQL, ...`). Reads such as `SHOW WORLDS`, `DIFF`, `MERGE ... DRY RUN` and `AS OF` work. Use the `fork` tool to fork.
 - **Session-scoped:** "its own worlds" lasts as long as the process. A new `chronos mcp` can't change worlds an earlier one forked; use `--agent` for forks that stay the agent's.
 - **Merging:** a person runs `chronos <folder> merge <branch>` in a terminal, or `MERGE WORLD` from psql.
+- **Merge policies:** `merge_policies`, `check_merge_policy` and `reviews` work. `set_merge_policy` and `drop_merge_policy` change nothing: they reply with the SQL for a person to run, so the agent drafts rules (tried with `check_merge_policy` first) and the person applies them.
 - **Not the same as `chronos serve --safe`:** that makes HTTP and Postgres clients without an agent's token act as the agent `guest` (see [HTTP API](../http-api.md#auth-and-exposure)). It doesn't change `chronos mcp`.
 
 ### As an agent
@@ -338,10 +398,12 @@ With `--agent NAME`, each call is checked against that agent's rights and quotas
 |---|---|
 | `merge` | `merge` or `merge_own` |
 | `restore`, `rollback` | `restore` |
-| `undo_merge` | `admin`, or `restore` and `merge` |
+| `undo_merge` | `admin`, or `restore` and `merge`; never with a merge policy |
+| `set_merge_policy`, `drop_merge_policy` | `admin` |
 
 - **Checked per call:** `put` and `delete` as writes to `branch`; `merge` as a merge of `branch` (or into `into`); `restore`; `set_meta` and `discard` as managing that world (`cascade`: its whole tree); `sql`, `checkpoint`, `rollback` and `undo_merge` statement by statement, as the Postgres port checks them; `fork`, `simulate` and `replay` as they run; everything else as a read of `branch`.
 - **Refused calls** come back with `isError: true` and the reason.
+- **An agent with a merge policy:** its `merge` goes through when the merge keeps to the policy's rules. When it breaks one, it's refused (`merging bot-2 needs a person's review (merge policy small: it changes 5 rows (at most 2)); it's queued (SHOW REVIEWS)`) and the branch waits in `reviews` for a person. `merge_preview` shows a `blocked` row saying so first. See the [guide](../guides/merge-policies.md).
 
 ## Example session
 

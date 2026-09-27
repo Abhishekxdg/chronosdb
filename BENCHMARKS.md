@@ -35,6 +35,12 @@ With durability on (`chronos-disk` in the same harness: write-ahead log, fsync o
 - **SQLite:** a branch is a file copy, and the merge is a full-table `EXCEPT`, because file copies don't track changes. It's capped at 64 workers by the macOS file-descriptor limit.
 - **Postgres:** a branch is `CREATE DATABASE … TEMPLATE`. The template can't have connections, so agents fork a frozen copy rather than live main. The merge replays the agent's known writes, which is a generous shortcut. It's capped at 25 workers because `max_connections` is 100.
 
+**Fast copies that don't merge (not measured by us):** two newer ways to copy a Postgres database quickly still stop at the copy.
+- **Postgres 18 clones:** `CREATE DATABASE … TEMPLATE src STRATEGY FILE_COPY` with [`file_copy_method = clone`](https://www.postgresql.org/docs/18/runtime-config-resource.html) copies the files with `copy_file_range()`, which XFS or Btrfs can do by sharing blocks. It's still a whole database per copy, with a checkpoint before and after, and [no other session may be connected to the source while it copies](https://www.postgresql.org/docs/18/sql-createdatabase.html), so a live `main` can't be forked. There is no diff and no merge back.
+- **Xata** (open source, Apache 2.0): [copy-on-write branches at the storage layer](https://xata.io/blog/open-source-postgres-branching-copy-on-write) under unmodified Postgres, instant whatever the size. Its docs answer "Can I merge branches?" with ["No"](https://xata.io/docs/core-concepts/branching): schema changes are applied to each branch by migration, and data doesn't flow back.
+
+Neither returns an agent's changes as rows or its conflicts as data; Dolt (above) and Chronos do.
+
 **Losses and caveats:**
 - **Merge queueing:** Chronos's median merge at 1,000 agents is slower than Postgres's (736 ms vs 348 ms), because merges into `main` queue behind each other. A single merge takes about 4 ms. **Unfair setup:** the Chronos run had one thread per agent (1,000 merges queued at once), while Postgres was capped at 25 workers. At the same 25 workers (`WORKERS=25`), the Chronos median is 39–46 ms. See section 8.
 - **Forks under heavy load:** fork p99 at 1,000 agents reaches about 190 ms, from scheduling 1,000 OS threads on 8 cores.
@@ -514,6 +520,35 @@ The same VM, 30 GB cap, each query in a new `chronos <db> < query.sql` process, 
 | `count(*)`, 32 MB cache (the scan alone) | – | 70 / 70 MB | 210 / 195 MB |
 
 Main reads the whole table into memory before grouping a DISTINCT aggregate; the branch holds the groups, their distinct values up to the budget, then spills. What still grows at 10 million rows is the scan's own share, the same with `count(*)` on main (70 MB at 4 million rows, 210 MB at 10 million), and at the defaults the page cache filling to 256 MB. Grouped DISTINCT spilling to disk is slower than holding it: 23.5 s against 8.0 s at 4 million rows, 52 s against 19 s at 10 million. While it fits, it's as fast: `count(distinct j)` over 1 million rows took 2.1 s on both builds, five runs each.
+
+## 13. Correctness: SQLite's sqllogictest over the Postgres protocol
+
+SQLite's [sqllogictest](https://sqlite.org/sqllogictest) corpus (622 files; the [GitHub mirror](https://github.com/gregrahn/sqllogictest)) checks query answers: every query comes with its result, compared value by value or by an MD5 of all values. It's run here as the `postgresql` engine, so the records the corpus marks as not for Postgres are skipped. The same runner (its scripts and these results are in [`bench/slt`](bench/slt); its Rust source is in the engine repository) sends every record over the Postgres protocol to a fresh `chronos serve` per file, and to a reference **Postgres 17** (a database per worker), and prints values as SQLite's own runner does. A record that fails on both is the corpus's SQLite dialect, not the engine. Linux VM (4 vCPUs, 32 GB), 2026-09-27; Chronos with the fixes listed below, each file that a fix touched run again after it.
+
+| | files | records run | passed | failed |
+|---|---:|---:|---:|---:|
+| **Chronos DB** | 622 | 5,675,180 | **5,670,175 (99.912%)** | 5,005 |
+| Postgres 17 | 622 | 5,675,180 | 5,663,585 (99.796%) | 11,595 |
+
+1,745,458 records were skipped on both (marked `skipif postgresql` or for another engine).
+
+**Wrong answers: none of Chronos's own.** Chronos returned a different answer from the corpus's 8 times, and Postgres 17 returned the identical answer each time (SQLite's `REPLACE`). There is no record where Postgres answers right and Chronos answers wrong.
+
+**Where only Chronos fails (63 records):** `22012 division by zero` in machine-generated expressions that also compare with a NULL constant, such as `WHERE NULL <> - 39 * - col4 / + 0`. Postgres folds the comparison with NULL to NULL when it plans and never divides; Chronos divides. (47 other such records fail only on Postgres: the two evaluate in different orders.)
+
+**Where only Postgres fails (6,653 records), Chronos is laxer than Postgres, not better:** it accepts unary `+` on text (6,420; Postgres: `operator does not exist: + text`), does integer arithmetic in 64 bits where Postgres's `integer` overflows at 32 (29; Postgres: `22003`), and keeps some `NULLIF` / `COALESCE` / `CASE` results integer where Postgres makes them `numeric` (157, where Chronos matches SQLite's answer and Postgres doesn't). These pass against the corpus but are differences from Postgres.
+
+**Both fail (4,942):** SQLite's own rules, where both answer as Postgres does: dropping a view other views read without `CASCADE` (2BP01, most of them, in `index/view`), SQLite's trigger syntax, `REPLACE` and `REINDEX`, `'hello' IN (SELECT int_col ...)` (22P02), and 31 division-by-zero records both raise.
+
+**Found and fixed by this run** (in `fx-pgcompat`): a column set twice in one `SET` was accepted (Postgres: 42601); a string literal that isn't its column's type passed when no row was compared (Postgres: 22P02 when planning); aggregates rejected `ALL` (`sum(ALL x)`); a parenthesis holding an `OR` counted 16 levels toward the nesting limit, so `(a OR (a OR ...))` was refused at 25 deep; and `FROM (a JOIN b ON ...)` was a syntax error (3,017 records). Still refused: a parenthesized join with an alias of its own or after an outer join or `USING` (0A000).
+
+```bash
+git clone --depth 1 https://github.com/gregrahn/sqllogictest
+cargo build --release && cargo build --release --manifest-path bench/slt/Cargo.toml
+cp target/release/chronos bench/slt/target/release/slt bench/slt/
+bench/slt/par.sh chronos out-chronos 3 $(find sqllogictest/test -name '*.test')
+bench/slt/par.sh postgres out-postgres 2 $(find sqllogictest/test -name '*.test')   # Postgres at host=/tmp
+```
 
 ## Rerun everything
 

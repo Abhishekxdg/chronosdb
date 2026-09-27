@@ -1,6 +1,29 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-09-27)
+
+**Merge policies: agents merge on their own within rules, the rest wait for a person**
+- `CREATE / ALTER / DROP MERGE POLICY` with `max_rows`, `max_deletes`, `tables`, `review_tables`, `schema` and `overwrite`, and `ALTER AGENT ... SET (policy = ...)`. The rules are checked inside the merge, on the rows it applies, under its locks, so what is checked is what merges. A refused merge keeps its world and waits in `SHOW REVIEWS` for a person to merge or drop it.
+- Over MCP: `merge_policies`, `check_merge_policy` (try rules on a branch's real changes), `set_merge_policy`, `drop_merge_policy`, `reviews`; in safe mode the agent drafts rules and gets the SQL for a person to run. An agent under a policy changes main only by merging, and may not `UNDO MERGE` or `UNDO AGENT`. See [docs/guides/merge-policies.md](docs/guides/merge-policies.md).
+
+**Correctness, measured: SQLite's sqllogictest over the Postgres protocol**
+- 622 files, 5,675,180 records, the same runner on Chronos DB and Postgres 17: Chronos passes 99.912%, Postgres 99.796%, and there's no record Postgres answers right and Chronos wrong. The 63 that fail only on Chronos are division by zero beside a NULL constant. Method, gaps and results: [BENCHMARKS.md §13](BENCHMARKS.md#13-correctness-sqlites-sqllogictest-over-the-postgres-protocol) and `bench/slt`. What the run found is fixed:
+- **String literals are read as the type they meet when the statement is planned**, as Postgres does: `'hello' = int_col`, `x IN (1, 'hello')`, `'hello' IN (SELECT x ...)` and `SET x = 'hello'` fail with 22P02 even when no row is compared or changed (they were only checked row by row, so an empty table let them pass).
+- A column set twice in one `SET` is 42601, `multiple assignments to same column`.
+- Aggregates take `ALL`, the default, as in `sum(ALL x)` and `string_agg(ALL s, ',')` (it was a syntax error).
+- An `OR` or `AND` inside each of many nested parentheses, as generated queries write them, is counted by the tree it makes: each such level counted 16 toward the limit of 400, so `(a OR (a OR (...)))` was refused (54001) at 25 levels; now it's about 3 a level, and 60 levels run.
+- **Parenthesized joins in FROM:** `FROM (a JOIN b ON ...)`, `((a CROSS JOIN b))`, and after an inner or cross join `a JOIN (b JOIN c ON ...) ON ...` (it was a syntax error, `expected SELECT`); one after an outer join or USING, or with an alias of its own, is refused (0A000) for now. Both found by SQLite's sqllogictest.
+
+**SQL**
+- **A `WITH` query used more than once is computed once**, as in Postgres: every use reads the same rows, so `nextval()` or `random()` in it gives one value to all its uses.
+- **`INSERT INTO t VALUES (1)` into a wider table** fills the first columns and gives the rest their defaults (serials included), as Postgres does.
+
+**Fixes from the fourth code review**
+- A `COPY FROM STDIN` whose client sends nothing for `CHRONOS_COPY_IDLE` (60 s) is dropped and undone, instead of holding its world's writers for good; one huge CopyData message is read a part at a time.
+- After a power cut, a page left half-written at the end of the pack is checked before it's taken as stored, and written again whole.
+- A big statement committed by its log note is reported done even if the rest of that checkpoint fails (retried later), so a client isn't told to insert twice.
+- Replaying history (`UNDO`, `AS OF`, `HISTORY`) errors when a log segment it needs was cleaned up, instead of replaying without it.
+- `UNDO MERGE` and `UNDO AGENT` need the right to write the world they change, as `RESTORE` does.
 
 **Integer keys in number order**
 - **Tables made from now on store an integer primary key in number order,** so a range of ids is one read of the tree: `WHERE id > 1000` no longer scans the table, and `BETWEEN` no longer looks keys up one by one (it did for ranges under 100,000 keys). Rows without `ORDER BY` come back in id order (1, 2, 10), not as text (1, 10, 2). Tables made before keep their keys as they are.

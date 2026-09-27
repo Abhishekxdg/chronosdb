@@ -354,6 +354,8 @@ Against **Dolt 2.3.5**, the only other database with real merges (Linux VM, real
 | 100 | 270k rows/s | 15.4k rows/s | **18×** |
 | 1,000 | 220k rows/s | 20.5k rows/s | **11×** |
 
+Postgres 18 clones (`CREATE DATABASE … STRATEGY FILE_COPY` with `file_copy_method = clone`, on XFS or Btrfs, with nothing else connected to the source) and [Xata](https://xata.io/docs/core-concepts/branching)'s open-source copy-on-write branches make copies fast too, but neither diffs or merges an agent's changes back or returns conflicts as rows. We haven't measured either; see [BENCHMARKS.md §1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres).
+
 ¹ Merges into `main` queue behind each other; with one thread per agent, 1,000 queue at once. At Postgres's 25 workers the Chronos median is **46 ms vs Postgres's 1,157 ms** ([§8](BENCHMARKS.md#8-the-losses-rerun-on-linux)).
 
 ### Vector search on real embeddings
@@ -434,6 +436,7 @@ Also measured: **Monte Carlo Tree Search** where every tree node is a world (Con
 | **Deterministic simulation** | [shuttle](https://github.com/awslabs/shuttle) explores concurrent schedules of agents, writes, checkpoints and GC | Passes 3,000 schedules; failing schedules replay exactly |
 | **Jepsen-style** | `kill -9` the server during concurrent fork/merge bank transfers | 300 kills, 108,178 transfers, none lost, every balance matches |
 | **Postgres differential** | Same queries on Chronos DB and real Postgres 17, results compared | Functions, types, errors and formatting match |
+| **sqllogictest** | SQLite's query corpus (622 files, 5.68M records) over the Postgres protocol, the same runner on Chronos DB and Postgres 17 | Chronos **99.912%**, Postgres 17 99.796%; **no wrong answer Postgres gets right**; 63 fail only on Chronos (division by zero beside a NULL constant). [§13](BENCHMARKS.md#13-correctness-sqlites-sqllogictest-over-the-postgres-protocol) |
 | **Capability audit** | 30 end-to-end capability checks, executed | 27 pass, 3 partial (being closed) |
 
 The Jepsen-style test found two real bugs before this release (money created by a merge that treated equal values as no conflict, and a silent loss after a fast restart), and both are fixed. See [BENCHMARKS.md §5](BENCHMARKS.md#5-crash-safety).

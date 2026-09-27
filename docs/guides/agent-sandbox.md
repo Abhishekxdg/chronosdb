@@ -178,7 +178,7 @@ Safe mode needs its own server start, so the script doesn't cover it.
 claude mcp add chronos -- chronos mcp /path/to/shopdb
 ```
 
-If `chronos serve` already has the folder open, `chronos mcp` joins it rather than failing. By default MCP runs in safe mode: the agent gets `describe`, `find`, `sql`, `get`, `put`, `delete`, `fork`, `set_meta`, `branches`, `diff`, `history`, `merge_preview`, `checkpoint`, `rollback`, `discard`, `simulate` and `replay`, and changes only the worlds it forked in that session. `merge`, `restore` and `undo_merge` aren't listed, and world statements in its `sql` calls (fork, merge, switch, drop) are refused: it uses the `fork` tool instead.
+If `chronos serve` already has the folder open, `chronos mcp` joins it rather than failing. By default MCP runs in safe mode: the agent gets `describe`, `find`, `sql`, `get`, `put`, `delete`, `fork`, `set_meta`, `branches`, `diff`, `history`, `merge_preview`, `checkpoint`, `rollback`, `discard`, `simulate`, `replay` and the merge-policy tools (it drafts policies; you apply them), and changes only the worlds it forked in that session. `merge`, `restore` and `undo_merge` aren't listed, and world statements in its `sql` calls (fork, merge, switch, drop) are refused: it uses the `fork` tool instead.
 
 The loop is the same as above: `describe`, `fork` (with `meta`), `put` or `sql` with `branch` set to its world, `diff`, `merge_preview`. Then it tells you the world's name, and you merge it from a terminal (`chronos /path/to/shopdb merge agent_a`) or from psql. `--allow-merge` gives it the merge tools, and `--agent NAME` makes it act as an agent you created, with that agent's rights.
 
@@ -195,3 +195,4 @@ The loop is the same as above: `describe`, `fork` (with `meta`), `put` or `sql` 
 - [SQL: worlds](../sql.md#worlds): partial merges (`ONLY TABLES`, `ONLY KEYS`), `MERGE ... INTO` another world, TTLs, pinning.
 - [Agent evaluation](agent-evaluation.md): grade an agent's world against the state it should have left.
 - [Scenario planning](scenario-planning.md): let `SIMULATE` fork and score a thousand worlds for you.
+- [Merge policies](merge-policies.md): let agents merge on their own within rules, and review only what breaks them.

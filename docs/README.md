@@ -29,6 +29,7 @@ It speaks the Postgres protocol, so `psql`, drivers and ORMs connect as they do 
 - [Agent sandbox](guides/agent-sandbox.md): give several agents their own worlds, compare them, merge the best.
 - [Agent evaluation](guides/agent-evaluation.md): grade an agent by diffing its world against the expected state.
 - [Scenario planning](guides/scenario-planning.md): simulate a thousand futures, score them in SQL, merge one.
+- [Merge policies](guides/merge-policies.md): let agents merge on their own within rules you set; review only what breaks them.
 
 ## Reference
 
