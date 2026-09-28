@@ -19,7 +19,7 @@
 | **DuckDB 1.5.5** | analytics reports over 200,000-row tables | 2.8–25.4 ms | 0.4–8.3 ms: **2.2–7× faster** | [4](#4-sql-over-the-postgres-protocol) |
 | **pgvector 0.8.6** | vector search median, all rows, 1M real embeddings, both at defaults | 4.69 ms at 99.3% recall | **2.40 ms**, at 92.8% recall. Raised to 98.6% recall, pgvector takes 13.5 ms. | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 | **Weaviate, Chroma, Milvus, Elasticsearch, LanceDB** | vector search median, all rows, 1M real embeddings | 4.69 ms at 99.3% recall | 2.25–3.92 ms, at 85.0–98.2% recall (Weaviate: 2.48 ms at 98.2%) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
-| **Postgres 17** | merge p50, 1,000 agents on disk, one thread per agent | 1,231 ms | **128 ms** (25 workers) | [1](#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
+| **Postgres 17** | merge p50, 1,000 agents on disk, one thread per agent | 714–718 ms (1,231 ms before #23 and #29) | **128 ms** (25 workers) | [1](#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
 | **its own target** | vector search inside a fork, against main, 1M rows | 1.55× main (no filter), 1.12× (text) | target: within 1.1× | [3](#3-hybrid-search-inside-branches-phase-3-targets-p99--5-ms-at-1m-fork-within-10-of-main) |
 | **its own gate** | filtered vector search at 10%, 500k × 384, against tuned pgvector | 0.93 ms | 1.17–1.22 ms: only 1.3×, under the 5× gate | [2](#2-vector-search-vs-postgres--pgvector-phase-1-kill-gate-5-pgvector) |
 | **Redis 8.10** | vector search median, all rows, 76k and 1M real embeddings | 0.72–0.74 ms, 4.69 ms | **0.46 ms, 0.50 ms**, at 75.0% and 74.2% recall (Chronos: 99.98%, 99.3%) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
@@ -55,17 +55,17 @@ On disk (`chronos-disk`: write-ahead log, fsync on every merge into main, backgr
 | 100 | 459k | 621k | 555k |
 | 1,000 | **207k** | 543k | 456k |
 
-These on-disk runs are from before an open world's writes reached the log in batches (section 8). **With that fix, at 1,000 agents** (same machine, two rounds, before and after alternating; before is `main` at `368410af`):
+These on-disk runs are from before two fixes (section 8): #23 logs an open world's writes in batches, and #29 has each thread remember its last world rather than look it up under the branch map's lock. **With both, at 1,000 agents** (same machine, two rounds each, alternating; before is `main` at `368410af`; #23 alone from its own jobs):
 
-| threads | before | after | in memory (no log) |
-|---|---|---|---|
-| one per agent (1,000) | 4.96–5.06 s | **1.84–1.98 s** | 0.79 s |
-| 64 | 2.20–2.25 s | **1.39–1.41 s** | 0.68 s |
-| 25 | 1.94–1.97 s | **1.43–1.46 s** | 0.72 s |
+| threads | before | #23 | #23 + #29 (`main`) | in memory (no log) |
+|---|---|---|---|---|
+| one per agent (1,000) | 4.96–5.08 s | 1.84–1.98 s | **1.76–1.80 s** (554k–568k rows/s) | 0.76–0.79 s |
+| 64 | 2.20–2.26 s | 1.39–1.41 s | **1.40 s** (713k–716k rows/s) | 0.68 s |
+| 25 | 1.91–1.97 s | 1.43–1.46 s | **1.40–1.41 s** (707k–712k rows/s) | 0.72 s |
 
-At 100 agents: 0.22 s before, 0.10–0.11 s after. Merge p50 at one thread per agent went from 1,231–1,263 ms to 576–622 ms.
+At 100 agents: 0.22–0.24 s before, 0.10 s after. Merge p50 and fork p50 moved the other way (see the losses below): with one thread per agent, merge p50 went from 1,231–1,273 ms to 576–622 ms with #23 and 714–718 ms with both, and fork p50 from 3.9–4.9 ms to 65–73 ms (`bench/results/2026-09-28-coalesce/65-branchmap.out`).
 
-**Verdict:** on disk, Chronos was 21–55× Postgres at 1,000 agents before the batching fix (on the M2 it was 190–340×: this machine's Postgres is much faster, 9.8k rows/s against 1.9k), and the fix widens that. The gate passes.
+**Verdict:** on disk, Chronos is 57–73× Postgres at 1,000 agents (554k–716k rows/s against 9.8k; 21–55× before #23 and #29, and 190–340× on the M2, where Postgres did 1.9k rows/s). The gate passes.
 
 **How the baselines were set up:**
 - **SQLite:** a branch is a file copy, and the merge is a full-table `EXCEPT`, because file copies don't track changes. Capped at 64 workers.
@@ -81,7 +81,7 @@ At 100 agents: 0.22 s before, 0.10–0.11 s after. Merge p50 at one thread per a
 | 100 | 519k–531k | 26.5k–26.9k | **20×** | 0.06–0.08 ms · 43–54 ms | 13–19 ms · 247–295 ms |
 | 1,000 | 457k | 28.3k–28.4k | **16×** | 0.008 ms · 24 ms | 11–12 ms · 855–877 ms |
 
-On the 4-vCPU VM (2026-09-24) the gap was 18×, 18× and 11×, and Chronos lost fork p50 at 1,000 agents (59 ms against 26 ms): that was 1,000 threads on 4 cores. At equal workers on 32 cores Chronos forks in 8 µs.
+These Chronos runs predate #23 and #29; with them, Chronos on disk at 64 workers does 713k–716k rows/s at 1,000 agents, **25×** Dolt (the Dolt runs weren't repeated). On the 4-vCPU VM (2026-09-24) the gap was 18×, 18× and 11×, and Chronos lost fork p50 at 1,000 agents (59 ms against 26 ms): that was 1,000 threads on 4 cores. At equal workers on 32 cores Chronos forks in 8 µs.
 
 The same harness's Postgres mode (template databases, Python client, 25 workers) gave 2.1–2.2 s per fork and 9.6k–9.9k rows/s at 100 and 1,000 agents, as the Rust harness above did.
 
@@ -94,9 +94,9 @@ The same harness's Postgres mode (template databases, Python client, 25 workers)
 Neither returns an agent's changes as rows or its conflicts as data; Dolt and Chronos do.
 
 **Losses and caveats:**
-- **Merges on disk with one thread per agent.** At 1,000 agents, merge p50 was 1,231 ms against Postgres's 128 ms before writes reached the log in batches, and 576–622 ms after; the run takes 1.84–1.98 s (was 4.96–5.06 s) against 1.43–1.46 s at 25 workers. Merges into `main` queue behind each other.
-- **Fork p99 under heavy load:** 54 ms at 1,000 threads on disk (measured before the batching fix), from the same contention.
-- **Merge p50 at 25 workers rose on disk** with batched writes (4.9–6.2 ms to 26.6–27.4 ms): agents now reach their merges sooner and queue on `main` together, and a merge logs its world's rows. The run as a whole is 26% faster.
+- **Merges on disk with one thread per agent.** At 1,000 agents, merge p50 is 714–718 ms against Postgres's 128 ms at 25 workers (1,231 ms before #23 and #29); the run takes 1.76–1.80 s (was 4.96–5.08 s) against 1.40 s at 25 workers. Merges into `main` queue behind each other: in memory, with no log, the p50 is 325 ms.
+- **Forks under heavy load:** at 1,000 threads on disk, fork p50 is 65–73 ms and p99 229–233 ms with #23 and #29 (3.9–4.9 ms and 55–68 ms before). Forks take the branch map for writing and log while holding it, and 1,000 agents now reach their forks and merges together.
+- **Merge p50 at 25 and 64 workers rose on disk** with #23 and #29: 4.1–4.8 ms to 25–26 ms at 25 workers, 11–16 ms to 64–66 ms at 64 (still 2–5× faster than Postgres's 128 ms). Agents now reach their merges sooner and queue on `main` together, and a merge logs its world's rows. The runs as a whole are 27–37% faster.
 
 ## 2. Vector search vs Postgres + pgvector (Phase 1 kill gate: 5× pgvector)
 
@@ -423,7 +423,9 @@ The first edition's table: one run, the five systems one after another on a load
 | 25 workers: wall | 1.94–1.97 s | **1.43–1.46 s** |
 | 100 agents: wall | 0.22 s | 0.10–0.11 s |
 
-**What's left:** after the fix, 2% of context switches wait for the log and 67% for the branch map's lock (`Core::branch`): forks and merges take it for writing, and append to the log while they hold it, so each one parks the thousand writers looking up their world. fsyncs are 9%. Logging a merge's batch before it takes its locks made the 1,000-thread run slower (2.35 s), so it isn't in.
+**Then #29:** each thread remembers the last world it looked up (a weak reference, checked against a retired flag that merges and discards set before the world leaves the map), so a put no longer takes the branch map's lock. Waits there fell from 67% to 29% of context switches; fsync is now 20% and `merge_with` 10%. At 1,000 threads the run went to 1.76–1.80 s (554k–568k rows/s); at 25 and 64 workers, 1.40–1.41 s. Merge p50 at 1,000 threads rose to 714–718 ms, and fork p50 to 65–73 ms ({J}).
+
+**What's left:** 1.8 s on disk against 0.76 s in memory at 1,000 threads. Forks and merges still take the branch map for writing and append to the log while they hold it; the 29% of waits left in `Core::branch` are probably each agent's first lookups while 1,000 forks take the map at the start. Logging a merge's batch before it takes its locks made the 1,000-thread run slower (2.35 s), so it isn't in. Next would be not logging while holding the map for writing, or sharding the map.
 
 ### The losses of sections 1, 4 and 6
 

@@ -85,8 +85,8 @@ Headline numbers against the best rival measured on the same machine. Every row 
 | Workload | Chronos DB | Best rival measured | |
 |---|---|---|---|
 | Fork a 100k-row database for an agent | **~1.5–2 µs** | Dolt 8–54 ms · Postgres 2.1–3.6 s (template DB) | [§1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
-| 1,000 agents each fork, write 1,000 rows, merge (on disk, 64 workers each) | **457k rows/s** | Dolt 28.3k rows/s (**16×**) · Postgres 17: 9.8k rows/s | [§1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
-| Merge p50, 1,000 agents at 25 workers (on disk) | **6.1 ms** | Postgres 17: 128 ms | [§1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
+| 1,000 agents each fork, write 1,000 rows, merge (on disk, 64 workers each) | **713k–716k rows/s** | Dolt 28.3k rows/s (**25×**) · Postgres 17: 9.8k rows/s | [§1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
+| Merge p50, 1,000 agents at 25 workers (on disk) | **25–26 ms** | Postgres 17: 128 ms | [§1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
 | Vector search, 76k real OpenAI embeddings (1,536-d), p50 / recall@10 | **0.72 ms / 99.98%** | pgvector 1.01 ms / 82.0% · Weaviate 1.82 ms / 97.0% · Qdrant 3.73 ms / 98.8% | [§6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 | Vector search, 1M real embeddings, p50 / recall@10 | 4.69 ms / **99.3%** | Weaviate **2.48 ms** / 98.2% · pgvector **2.40 ms** / 92.8% (**a loss on speed**; pgvector at 98.6% recall: 13.5 ms) | [§6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 | Vector search for one user (1%), 1M real embeddings, p50 / recall@10 | **3.68 ms / 100%** | Milvus 3.89 ms / 99.7% · Weaviate 8.47 ms / 100% · pgvector 30.9 ms / 94.6% | [§6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
@@ -345,17 +345,17 @@ The full record, with methods, raw tables and every caveat, is in **[BENCHMARKS.
 | system | fork p50 | merge p50 | total | agent rows/s |
 |---|---:|---:|---:|---:|
 | **Chronos DB** (in memory) | **0.005 ms** | 322 ms¹ | **0.77 s** | **1.29M** |
-| **Chronos DB** (on disk, 25 workers) | 0.007 ms | 6.1 ms | 1.8 s | 543k |
-| **Chronos DB** (on disk, 64 workers) | 0.008–0.012 ms | 12–24 ms | 2.2 s | 456k–457k |
+| **Chronos DB** (on disk, 25 workers) | 0.007 ms | 25–26 ms | 1.4 s | 707k–712k |
+| **Chronos DB** (on disk, 64 workers) | 0.008 ms | 64–66 ms | 1.4 s | 713k–716k |
 | Dolt 2.3.5 (real `DOLT_MERGE`, 64 workers) | 24 ms | 866 ms | 35 s | 28.3k |
 | Postgres 17 (`CREATE DATABASE ... TEMPLATE`, 25 workers) | 2,133 ms | 128 ms | 102 s | 9.8k |
 | SQLite (file copy + `EXCEPT` merge) | 2,762 ms | 3,113 ms | 404 s | 2.5k |
 
-Against **Dolt 2.3.5**, the only other database with real merges, at the same 64 workers: **22×** at 10 agents, **20×** at 100 and **16×** at 1,000.
+Against **Dolt 2.3.5**, the only other database with real merges, at the same 64 workers: **22×** at 10 agents, **20×** at 100 and **16×** at 1,000 before #23 and #29, and **25×** at 1,000 with them.
 
 Postgres 18 clones (`CREATE DATABASE … STRATEGY FILE_COPY` with `file_copy_method = clone`, on XFS or Btrfs, with nothing else connected to the source) and [Xata](https://xata.io/docs/core-concepts/branching)'s open-source copy-on-write branches make copies fast too, but neither diffs or merges an agent's changes back or returns conflicts as rows. We haven't measured either; see [BENCHMARKS.md §1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres).
 
-¹ Merges into `main` queue behind each other. On disk with one thread per agent, 1,000 at once, the merge p50 is **576–622 ms, still a loss** to Postgres's 128 ms (it was 1,231 ms before an open world's writes reached the log in batches). What's left is the branch map's lock, which forks and merges hold while they log ([§1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres), [§8](BENCHMARKS.md#8-the-losses-rerun-on-linux)).
+¹ Merges into `main` queue behind each other. On disk with one thread per agent, 1,000 at once, the merge p50 is **714–718 ms, still a loss** to Postgres's 128 ms (it was 1,231 ms before an open world's writes reached the log in batches, #23, and each thread remembered its last world, #29), and fork p50 there rose to 65–73 ms. What's left is the branch map's lock, which forks and merges hold while they log ([§1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres), [§8](BENCHMARKS.md#8-the-losses-rerun-on-linux)).
 
 ### Vector search on real embeddings
 
@@ -435,7 +435,7 @@ Also measured: **Monte Carlo Tree Search** where every tree node is a world (Con
 |---|---|---|
 | Analytics vs **DuckDB 1.5.5** (200k-row reports, 32 threads) | DuckDB **2.2–7× faster** | DuckDB is a columnar OLAP engine; Chronos stores rows. Columnar storage is not planned for v0.1; row counts in the tree and per-page min/max would narrow it |
 | Unfiltered vector search, 1M real embeddings | pgvector 2.40 ms, Weaviate 2.48 ms, Chroma 2.25 ms, Milvus 3.92 ms against Chronos **4.69 ms** | All at lower recall than Chronos's 99.3% (pgvector at 98.6% takes 13.5 ms). Where Chronos's time goes at 1M isn't profiled yet |
-| Merges on disk, 1,000 agents on one thread each | merge p50 **576–622 ms**, Postgres 128 ms (was 1,231 ms); the run takes 1.9 s against 0.8 s in memory (was 5.0 s) | An open world's writes now reach the log in batches; forks and merges still hold the branch map's lock while they log, which parks the writers. At 25 workers: 1.4 s. See [BENCHMARKS §8](BENCHMARKS.md#8-the-losses-rerun-on-linux) |
+| Merges on disk, 1,000 agents on one thread each | merge p50 **714–718 ms**, Postgres 128 ms (was 1,231 ms); fork p50 65–73 ms (was 4–5 ms); the run takes 1.8 s against 0.76 s in memory (was 5.0 s) | An open world's writes now reach the log in batches; forks and merges still hold the branch map's lock while they log, which parks the writers. At 25 workers: 1.4 s, merge p50 25–26 ms. See [BENCHMARKS §8](BENCHMARKS.md#8-the-losses-rerun-on-linux) |
 | Vector search inside a fork, 1M rows | **1.55×** main, unfiltered; 1.12× text (target: 1.1×) | Probably the fork's changed rows searched separately; not profiled yet |
 | Filtered vector search at 10%, 500k × 384 | **1.3×** tuned pgvector (the Phase 1 gate is 5×) | The other filter mixes pass (3.4–47×) |
 | Redis vector search (76k and 1M) | Redis **0.46–0.50 ms** against 0.72 and 4.69 ms | At its defaults Redis finds 74–75% of the true top 10; Chronos 99.3–99.98% |
