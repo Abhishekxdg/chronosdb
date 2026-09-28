@@ -61,6 +61,17 @@ insert into orders values
 insert into payments values (1, 3, 12.00), (2, 4, 99.00);
 ```
 
+## Start here: no delete merges on its own
+
+Whatever else an agent's policy says, start it with `max_deletes = 0`: every merge that deletes a row waits for a person. A wrong update leaves a row you can still see and fix; a wrong delete leaves nothing to look at, and a bulk one is the change people most regret. Most agents rarely need to delete, so the queue stays short, and each delete that comes through shows you whether the agent should be trusted with more.
+
+```sql
+create merge policy agents with (max_deletes = 0);
+alter agent bot set (policy = 'agents');
+```
+
+Loosen it only once the queue shows the deletes are routine, and then with a bound: `max_deletes = 50` for one merge, and `deletes_per_hour = 200` so the agent can't reach more by splitting the job across worlds.
+
 ## 1. Write the rules
 
 Small changes to orders may merge on their own. Bulk changes, deletes and anything touching money wait for you:
@@ -216,14 +227,15 @@ Only an `admin` creates, changes or drops policies, or gives one to an agent. An
 
 ## Recipes
 
-Start strict, then loosen the rules as the queue shows you what the agent actually does.
+Start strict, then loosen the rules as the queue shows you what the agent actually does. Every recipe but the data-cleaning job keeps `max_deletes = 0`.
 
 | Agent | Policy | Why |
 |---|---|---|
+| Any new agent | `max_deletes = 0` | nothing it deletes merges without you; the default to start from |
 | Support bot fixing typos in tickets | `tables = 'tickets', max_rows = 20, max_deletes = 0` | it can't reach anything else, or delete |
-| Pricing agent | `tables = 'prices', max_rows = 200, review_tables = 'prices_history'` | routine repricing flows; history rewrites wait |
-| Data-cleaning job | `max_rows = 5000, max_deletes = 50` | big but bounded; a runaway `DELETE` waits |
-| Agent near money | `review_tables = 'payments,refunds,payouts'` | every change to money has a person on it |
+| Pricing agent | `tables = 'prices', max_rows = 200, max_deletes = 0, review_tables = 'prices_history'` | routine repricing flows; history rewrites wait |
+| Data-cleaning job | `max_rows = 5000, max_deletes = 50, deletes_per_hour = 200` | deleting is its job, so bounded, not banned; a runaway `DELETE` waits |
+| Agent near money | `max_deletes = 0, review_tables = 'payments,refunds,payouts'` | every change to money has a person on it |
 | Migration assistant | `schema = true, max_deletes = 0, review_tables = 'payments'` | may change tables; deletes and money wait |
 | Many agents, one table | leave `overwrite = false` | the agent that forked earlier can't clobber a newer write |
 
@@ -273,7 +285,7 @@ Policies are SQL, so over HTTP you use the `sql` operation.
 
 ```bash
 curl -s localhost:7070/v1/sql -H 'Content-Type: application/json' \
-  -d '{"sql": "create merge policy careful with (max_rows = 3, review_tables = '\''payments'\'')"}'
+  -d '{"sql": "create merge policy careful with (max_rows = 3, max_deletes = 0, review_tables = '\''payments'\'')"}'
 curl -s localhost:7070/v1/alter_agent -H 'Content-Type: application/json' -d '{"name": "bot", "policy": "careful"}'
 ```
  Agents take a `policy` field in `create_agent` and `alter_agent` (a name, or `null` for none). An agent's refused `merge` gets `403` with the reasons, and a `dry_run` merge returns them in `blocked`.

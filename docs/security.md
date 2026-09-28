@@ -107,6 +107,8 @@ An agent has a name, an ID, a token, a list of what it may do (`can`) and quotas
 
 In SQL (psql, the `sql` HTTP op, or the `chronos mydb` shell), as the database's own user or an agent with `admin`:
 
+An agent that merges into `main` (`write_main` and `merge_own`) should keep to a merge policy, and the one to start from is `max_deletes = 0`: nothing it deletes reaches `main` without a person (see [merge policies](guides/merge-policies.md#start-here-no-delete-merges-on-its-own)).
+
 ```sql
 create agent bot with (can = 'read,fork,write_own', max_worlds = 10, world_ttl = '1 day');
 -- name | id | token      the token is shown once: keep it

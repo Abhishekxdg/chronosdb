@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**Docs: start every agent with `max_deletes = 0`**
+- The merge-policies guide opens with it (no delete merges without a person; loosen later with a bound, `max_deletes` and `deletes_per_hour`), its recipes keep it, and the security guide, concepts, README and MCP's policy-drafting instructions point to it.
+
 **Merge policies: limits per agent over an hour**
 - `rows_per_hour` and `deletes_per_hour` add up each agent's merges into `main` over the last hour, so a job split across several worlds is judged as a whole (`deletes_per_hour = 50`). Over the limit, the merge waits for a person. Merges between an agent's own worlds, and a person's merge approving one, don't count. The counts survive a restart.
 

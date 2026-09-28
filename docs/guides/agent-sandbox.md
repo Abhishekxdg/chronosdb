@@ -168,7 +168,7 @@ chronos serve shopdb --safe --admin-token "$ADMIN_TOKEN"
 
 - **Clients that aren't agents act as the agent `guest`:** over Postgres, that's any password other than the admin token. The guest reads anything, forks, and changes only worlds it forked. It can't write `main`, merge, restore, drop others' worlds or change settings (SQLSTATE 42501).
 - **The person approving** connects with the admin token as the password and runs the merges: `psql "postgres://admin:$ADMIN_TOKEN@127.0.0.1:5433/main"`.
-- **Agents with their own names and rights** (`CREATE AGENT`, then user = its name, password = its token) keep their own rights. See [concepts](../concepts.md#agents).
+- **Agents with their own names and rights** (`CREATE AGENT`, then user = its name, password = its token) keep their own rights. See [concepts](../concepts.md#agents). One allowed to merge into `main` should keep to a [merge policy](merge-policies.md#start-here-no-delete-merges-on-its-own), starting with `max_deletes = 0`.
 
 Safe mode needs its own server start, so the script doesn't cover it.
 

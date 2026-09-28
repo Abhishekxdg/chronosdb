@@ -634,7 +634,7 @@ ALTER AGENT name SET (policy = 'name')              -- or policy = null
 | Rule | A merge needs a person when | Default |
 |---|---|---|
 | `max_rows` | it changes more rows than this | `null` (no limit) |
-| `max_deletes` | it deletes more rows than this (`0`: any delete) | `null` (no limit) |
+| `max_deletes` | it deletes more rows than this (`0`: any delete, the recommended start for any agent) | `null` (no limit) |
 | `rows_per_hour` | it's a merge into `main`, and with the agent's other merges into `main` in the last hour it changes more rows than this | `null` (no limit) |
 | `deletes_per_hour` | likewise for deleted rows (`50`: at most 50 deletes an hour, however the job is split) | `null` (no limit) |
 | `tables` | it changes a table not in this list (`'orders,items'`) | any table |
