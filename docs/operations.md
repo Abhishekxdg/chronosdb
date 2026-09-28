@@ -9,6 +9,7 @@ mydb/
   manifest        the last checkpoint: each branch's tree roots, version and crash flag
   pages/          pack-<n> files of immutable, content-addressed, LZ4-compressed pages (+ .idx)
   remote, owner   only when attached to object storage (owner also with an anchor)
+  reads           which clients' SQL read which columns, and when (see DIFF ... READERS); not published to a remote
 ```
 
 - **Opening:** it loads the manifest, replays the log after it, and reads pages only when needed.

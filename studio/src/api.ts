@@ -33,6 +33,17 @@ export interface SqlResult {
   rows: Row[];
 }
 
+/** Something in the database that reads columns a change changed (a view, a trigger, a key...). */
+export interface Reader {
+  table: string;
+  columns: string[];
+  kind: string;
+  reader: string;
+  detail: string;
+  /** marked critical: a merge policy holds agents' merges changing what it reads */
+  critical: boolean;
+}
+
 export interface Change {
   key: string;
   before: Row | null;

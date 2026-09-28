@@ -436,6 +436,9 @@ show storage for world agent_7;
 show disk;                    -- bytes of pages in use, kept only for history, reclaimable; and the log's
 diff world agent_7b;          -- table, id, change, before, after, columns (what changed)
 diff world agent_7b as sql;   -- the same as statements: run them on main to make the change
+diff world agent_7b readers;  -- what reads each changed column (views, checks, keys, clients seen reading...), and what that can't see
+register reader nightly_export on orders (status, total);   -- a reader outside SQL, named by hand
+show readers;                 -- registered readers, and the clients seen reading which columns
 diff world a to b;            -- between any two worlds, or moments (a@-1 hour)
 merge world agent_7b dry run;  -- what the merge would do, row by row, and why rows conflict
 merge world agent_7b by columns resolve ('orders/7' = theirs, 'orders/9' = '{"id": 9, "status": "paid"}');

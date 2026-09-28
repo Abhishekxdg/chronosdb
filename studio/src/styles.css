@@ -612,6 +612,10 @@ button.col-line:hover { background: var(--hover); }
 .choice button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
 .footbar { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--surface); flex-wrap: wrap; }
 .plan { border: 1px solid var(--line); border-radius: var(--r-panel); background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.readers { border: 1px solid var(--line); border-radius: var(--r-panel); background: var(--surface); padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.readers ul { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.readers .kind { font-size: 11px; padding: 1px 6px; border-radius: var(--r); border: 1px solid var(--line); }
+.readers .kind.bad { background: var(--del-soft); color: var(--del); border-color: transparent; }
 .outcomes { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 .outcomes b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .outcomes .bad b { color: var(--del); }

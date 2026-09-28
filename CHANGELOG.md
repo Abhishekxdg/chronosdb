@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**What a change affects: readers of every changed column**
+- `DIFF WORLD w [TO b] READERS` lists what in the database reads each column the diff changes: views and materialized views (traced column by column through their queries, views on views included), merge checks, triggers (by event and `UPDATE OF`), functions (where their text names the table and column), primary keys, unique constraints, foreign keys (both directions), CHECK constraints and indexes (expressions and `WHERE` included). Rows added or deleted reach every reader of their table.
+- Clients seen reading: SQL over the Postgres protocol records which columns each client reads (by role, and `application_name`), and over HTTP by agent; a change's readers name them with when they last read. `REGISTER READER name ON table (cols)` names readers outside SQL (exports, sync tools), kept in the world; `UNREGISTER READER`, `SHOW READERS`.
+- Critical readers: `MARK READER billing CRITICAL` / `UNMARK READER` mark a reader of any kind, in the world (forks carry it, `DIFF` shows it, `SHOW READERS` keeps who and when). `DIFF ... READERS` lists critical readers first, then by blast radius, with a `critical` column; merge policies get a `critical` rule (default `false`) that holds an agent's merge changing a column a critical reader reads.
+- Every answer ends with what was covered: since when reads have been recorded and through which doors, and that `EXECUTE` strings aren't followed, so "no readers" is never read as "nothing reads this".
+- Over HTTP, `diff` with `readers: true` and every merge `dry_run` return `readers` and `coverage`; over MCP, `diff` takes `readers` and `merge_preview` appends them; the Studio's Changes view shows them.
+
 **Merge checks: rules every merge's result must keep**
 - `CREATE [OR REPLACE] MERGE CHECK name [ON TABLES (...)] [WITH (timeout = '2s')] AS SELECT ...`, `DROP MERGE CHECK`, `SHOW MERGE CHECKS`. A check is a query that must find nothing in what a merge would make. Every merge runs the checks for the tables it changes, on the world it merges into as the merge would leave it (partial merges and `INTO` included), inside the merge and under its locks, so two changes that are each fine but break a rule together are caught. Rows found refuse the merge (23514, HTTP 409) with the rows as the reason; an agent keeping to a merge policy is queued in `SHOW REVIEWS` instead. No one merges past a check, people included; only `admin` creates or drops one.
 - A check is one `SELECT` that changes nothing, run read only within its timeout (default 1 second; a merge it doesn't finish in is refused), stopping at the 11th row. `MERGE ... DRY RUN` names the checks that would fail and their rows in `blocked`.

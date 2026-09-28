@@ -71,9 +71,9 @@ show merge policies;
 ```
 
 ```
-  name   | max_rows | max_deletes | tables | review_tables | schema | overwrite |          created
----------+----------+-------------+--------+---------------+--------+-----------+---------------------------
- careful |        3 |           0 |        | payments      | f      | f         | 2026-09-27 16:19:35.06+00
+  name   | max_rows | max_deletes | tables | review_tables | schema | overwrite | critical |          created
+---------+----------+-------------+--------+---------------+--------+-----------+----------+---------------------------
+ careful |        3 |           0 |        | payments      | f      | f         | f        | 2026-09-27 16:19:35.06+00
 ```
 
 Every rule is optional. A rule left out doesn't limit anything, except `schema` and `overwrite`, which are `false` (the safe side) until you allow them:
@@ -84,8 +84,9 @@ Every rule is optional. A rule left out doesn't limit anything, except `schema` 
 | `max_deletes` | it deletes more rows than this; `0` means any delete | no limit |
 | `tables` | it changes a table not in this list (`'orders,items'`) | any table |
 | `review_tables` | it changes any table in this list | none |
-| `schema` | `false` and it changes a table itself (`CREATE`/`ALTER`/`DROP TABLE`), a view, function, sequence, schema or type | `false` |
+| `schema` | `false` and it changes a table itself (`CREATE`/`ALTER`/`DROP TABLE`), a view, function, sequence, schema or type (or a registered reader, or a critical mark) | `false` |
 | `overwrite` | `false` and it overwrites rows its parent changed since the fork | `false` |
+| `critical` | `false` and it changes a column a reader marked critical reads (`MARK READER billing CRITICAL`) | `false` |
 
 Rows are counted as the merge would apply them: one per row it inserts, updates or deletes in the parent, after `ONLY TABLES` / `ONLY KEYS`. A row settled `USING THEIRS` (the parent's value kept) changes nothing, so it doesn't count. Table names are read as SQL reads them: `orders` is folded to lowercase, and `"Orders"`, quoted, is another table (`tables = 'orders,"Orders"'`). The database's own bookkeeping (indexes, constraint rows, `serial` counters) doesn't count. Rows combined `BY COLUMNS` never count as overwrites: they keep the parent's changed columns.
 

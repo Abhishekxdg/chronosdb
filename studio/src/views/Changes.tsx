@@ -2,7 +2,7 @@
 // then the paged diff with only the changed columns, before → after), a dry-run preview with
 // conflicts explained and settled one by one, then Merge into <parent>, Discard, or Undo merge.
 import { useEffect, useState } from 'react';
-import { api, type ApiError, type Change, type Row } from '../api';
+import { api, type ApiError, type Change, type Reader, type Row } from '../api';
 import { useApp, worldOf, type App } from '../context';
 import { Empty, ErrorBox, toast, type Dialogs, useDialogs } from '../ui';
 import { n, plural, text } from '../util';
@@ -30,7 +30,7 @@ export function ChangesView() {
   const app = useApp();
   const dlg = useDialogs();
   const w = worldOf(app, app.world);
-  const [counts, setCounts] = useState<{ total: number; tables: Record<string, number> } | null>(null);
+  const [counts, setCounts] = useState<{ total: number; tables: Record<string, number>; readers?: Reader[]; coverage?: string[] } | null>(null);
   const [changes, setChanges] = useState<Change[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -51,7 +51,7 @@ export function ChangesView() {
   };
   useEffect(() => {
     if (!w?.parent) return;
-    api('diff', { branch: app.world, count: true }).then(setCounts, setError);
+    api('diff', { branch: app.world, count: true, readers: true }).then(setCounts, setError);
     page(null);
   }, []);
 
@@ -147,6 +147,7 @@ export function ChangesView() {
               </>
             )}
           </div>
+          {counts && counts.total > 0 && <Readers readers={counts.readers || []} coverage={counts.coverage || []} />}
           {plan && (
             <div className="plan">
               <div className="head-row" style={{ margin: 0 }}>
@@ -246,6 +247,38 @@ export function ChangesView() {
           Discard world
         </button>
       </div>
+    </div>
+  );
+}
+
+/** What reads the columns this world changed, by table, critical readers first, and what that can't see. */
+function Readers({ readers, coverage }: { readers: Reader[]; coverage: string[] }) {
+  const tables = [...new Set(readers.map((r) => r.table))];
+  return (
+    <div className="readers">
+      <h3 className="label">What reads these changes</h3>
+      {!readers.length && <p className="note">Nothing inside the database reads the changed columns.</p>}
+      {tables.map((t) => (
+        <div key={t}>
+          <div className="ident">{t}</div>
+          <ul>
+            {readers
+              .filter((r) => r.table === t)
+              .map((r) => (
+                <li key={`${r.kind}/${r.reader}`}>
+                  {r.critical && <span className="kind bad">critical</span>} <span className="kind">{r.kind}</span> <code>{r.reader}</code>
+                  <span className="muted"> reads {r.columns.join(', ')}</span>
+                  {r.detail && <div className="note">{r.detail}</div>}
+                </li>
+              ))}
+          </ul>
+        </div>
+      ))}
+      <ul className="note">
+        {coverage.map((c) => (
+          <li key={c}>{c}</li>
+        ))}
+      </ul>
     </div>
   );
 }

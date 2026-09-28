@@ -195,6 +195,7 @@ DIFF
 DIFF [WORLD | BRANCH] a
 DIFF [WORLD | BRANCH] a TO b
 ... [AS SQL]
+... READERS
 ```
 
 | Form | Compares |
@@ -219,6 +220,46 @@ With `AS SQL`: one column, `sql` (text), one statement per row (`INSERT`, `UPDAT
 ```sql
 diff world agent_7;
 diff world 'main@-1 hour' to main as sql;
+```
+
+### DIFF ... READERS
+
+What a change affects: what in the database reads each column the diff changes, so a reviewer sees what depends on a field, not only the rows that moved. Readers come from the world's own definitions (with `TO`, from `b`'s) and the merge checks.
+
+| Column | Type | |
+|---|---|---|
+| `table` | text | the changed table |
+| `columns` | text | the changed columns this reader reads (`status, score`) |
+| `kind` | text | `view`, `materialized view`, `merge check`, `trigger`, `function`, `primary key`, `unique`, `foreign key`, `check`, `index`, `vector index`, `registered reader`, `client`; `coverage` for the last rows |
+| `reader` | text | its name |
+| `detail` | text | its definition, or how it reads (`reads every column of lists`, `leads references lists`, `UPDATE runs bump()`) |
+
+- **How each is traced:** views, materialized views and merge checks column by column through their queries, with the views they read inlined, so a view on a view reaches the table. `*`, or an unqualified name several of a query's tables have, counts for every column it could mean. Keys, unique constraints, foreign keys, CHECK constraints and indexes by their columns, expressions and `WHERE`; a foreign key pointing at the table when its key changes or a row is deleted. Triggers when their event fires (`UPDATE OF` columns included). Functions where their text names the table and a changed column (or any column, when rows are added or deleted).
+- **Rows added or deleted** change every column of their table; a column added (`ALTER TABLE ... ADD`) reaches only what reads every column.
+- **Clients seen reading (`client`):** SQL over the Postgres protocol records which columns each client's statements read (a `SELECT`'s, an `UPDATE`'s or `DELETE`'s `WHERE` and `SET`), named by role, with the program's `application_name` when it gives one (`billing (nightly)`); over HTTP, by agent (or `http`). `detail` says when it last read one of these columns. A session records a column at most once a minute, so "last read" is that exact. Give each integration its own role, or at least its own `application_name`: clients sharing both show as one. Recorded reads are the database's, not a world's (a read of any world counts), kept in the folder's `reads` file (encrypted with the database), at most 100,000 (client, table, column) entries, the longest unseen dropped first.
+- **Registered readers:** things that read outside SQL (an export, a sync tool reading a dump) are named by hand, in the world like a view (so forks carry them, and under a merge policy a merge that adds or drops one is a schema change):
+
+  ```
+  REGISTER READER name ON table [(column, ...)]    -- no columns: every column; adds to the tables it reads
+  UNREGISTER READER name [ON table]                -- 42704 if it isn't registered
+  SHOW READERS                                     -- reader, kind (registered | client | marked), table, columns,
+                                                   -- last_read, critical, marked_by, marked_at
+  ```
+
+- **Critical readers, and blast radius:** `MARK READER billing CRITICAL` marks a reader, by name, of any kind: a client's role, a registered reader, a view, a function; `UNMARK READER billing` takes it away (42704 if it isn't marked). A mark lives in the world like a view: forks carry it, `DIFF` shows marking and unmarking (`mark critical`, `unmark critical`), it's kept with who marked it and when (`SHOW READERS`), and under a merge policy a merge that adds or removes one is a schema change a person reviews. `DIFF ... READERS` has a `critical` column and lists critical readers first, then the tables with the most readers, then the readers of the most changed columns. A merge policy's `critical` rule (default `false`) holds an agent's merge that changes a column a critical reader reads: `it changes leads.status, which critical client billing reads`.
+
+- **Coverage, always:** the last three rows (`kind` = `coverage`) say what was traced, since when clients' reads have been recorded and through which doors (the JSON API's `get` and `find` aren't recorded), and that queries a function builds as strings for `EXECUTE` aren't followed. "No readers" means none found, not that nothing reads the field.
+
+```sql
+diff world cleanup readers;
+```
+
+```
+ table |   columns    |       kind        |      reader        |               detail
+-------+--------------+-------------------+--------------------+-------------------------------------
+ leads | status       | check             | leads_status_check | CHECK (status IN ('new', 'won'))
+ leads | status       | view              | open_leads         |
+       |              | coverage          |                    | traced inside the database: views, ...
 ```
 
 ## MERGE
@@ -537,7 +578,7 @@ CREATE MERGE POLICY name [WITH (key = value, ...)]  -- the policy's row, tag CRE
 ALTER MERGE POLICY name SET (key = value, ...)      -- the keys named change; the rest stay
 DROP MERGE POLICY name                              -- refused (22023) while an agent keeps to it
 SHOW MERGE POLICIES                                 -- name, max_rows, max_deletes, tables, review_tables,
-                                                    -- schema, overwrite, created
+                                                    -- schema, overwrite, critical, created
 SHOW REVIEWS                                        -- world, owner, policy, reasons, asked, version,
                                                     -- changed_since (written to since the agent asked)
 ALTER AGENT name SET (policy = 'name')              -- or policy = null
@@ -551,6 +592,7 @@ ALTER AGENT name SET (policy = 'name')              -- or policy = null
 | `review_tables` | it changes any table in this list | none |
 | `schema` | `false` and it changes a table itself, a view, function, sequence, schema or type | `false` |
 | `overwrite` | `false` and it overwrites rows its parent changed since the fork (`MERGE ... OURS`, picked rows; rows combined `BY COLUMNS` don't count) | `false` |
+| `critical` | `false` and it changes a column a reader marked critical reads (see [DIFF ... READERS](#diff--readers)) | `false` |
 
 An agent keeping to a policy changes `main` only by merging: a direct write there, `RESTORE`,
 `UNDO MERGE` or `UNDO AGENT` is refused (42501), since it would skip the rules. Rules count the

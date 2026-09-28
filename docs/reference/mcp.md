@@ -210,6 +210,7 @@ What changed on a branch since it was forked, row by row and field by field: the
 | `branch` | string | yes | |
 | `to` | string | no | none: compare with the fork point. Else from `branch` to `to`; either can be `name@when` |
 | `as_sql` | boolean | no | `false`; `true`: the change as SQL statements (`INSERT`, `UPDATE`, `DELETE`, `CREATE`/`ALTER TABLE`) |
+| `readers` | boolean | no | `false`; `true`: instead of rows, what in the database reads each changed column, then what that couldn't see ([`DIFF ... READERS`](worlds.md#diff--readers)) |
 | `limit` | integer | no | 20 |
 | `offset` | integer | no | 0 |
 
@@ -252,7 +253,7 @@ Returns `merged 1 change from task-1 into main`. `confirm` applies to a plain me
 
 ### merge_preview
 
-What `merge` would do with the same parameters, without doing it: per row, whether it applies or conflicts and why, with the fork point's, the branch's and the parent's versions. Runs [`MERGE ... DRY RUN`](worlds.md#merge-dry-run); its columns are `table`, `id`, `outcome`, `detail`, `base`, `ours`, `theirs`, `result`.
+What `merge` would do with the same parameters, without doing it: per row, whether it applies or conflicts and why, with the fork point's, the branch's and the parent's versions. Runs [`MERGE ... DRY RUN`](worlds.md#merge-dry-run); its columns are `table`, `id`, `outcome`, `detail`, `base`, `ours`, `theirs`, `result`. Then `What reads the changed columns:` and the table from [`DIFF ... READERS`](worlds.md#diff--readers) for the branch.
 
 | Parameter | Type | Required | Default |
 |---|---|---|---|
@@ -360,6 +361,7 @@ Creates a merge policy, or changes the rules given of an existing one (the other
 | `review_tables` | array of strings | it changes any table in the list | `[]` |
 | `schema` | boolean | `false` and it changes a table itself, a view, function, sequence, schema or type | `false` |
 | `overwrite` | boolean | `false` and it overwrites rows its parent changed since the fork | `false` |
+| `critical` | boolean | `false` and it changes a column a reader marked critical reads ([`MARK READER`](worlds.md#diff--readers)) | `false` |
 
 An unknown rule, or a value of the wrong type, is refused with the rules' names. Returns the policy as a table.
 
