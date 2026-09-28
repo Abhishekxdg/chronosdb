@@ -423,7 +423,7 @@ The first edition's table: one run, the five systems one after another on a load
 | 25 workers: wall | 1.94–1.97 s | **1.43–1.46 s** |
 | 100 agents: wall | 0.22 s | 0.10–0.11 s |
 
-**Then #29:** each thread remembers the last world it looked up (a weak reference, checked against a retired flag that merges and discards set before the world leaves the map), so a put no longer takes the branch map's lock. Waits there fell from 67% to 29% of context switches; fsync is now 20% and `merge_with` 10%. At 1,000 threads the run went to 1.76–1.80 s (554k–568k rows/s); at 25 and 64 workers, 1.40–1.41 s. Merge p50 at 1,000 threads rose to 714–718 ms, and fork p50 to 65–73 ms ({J}).
+**Then #29:** each thread remembers the last world it looked up (a weak reference, checked against a retired flag that merges and discards set before the world leaves the map), so a put no longer takes the branch map's lock. Waits there fell from 67% to 29% of context switches; fsync is now 20% and `merge_with` 10%. At 1,000 threads the run went to 1.76–1.80 s (554k–568k rows/s); at 25 and 64 workers, 1.40–1.41 s. Merge p50 at 1,000 threads rose to 714–718 ms, and fork p50 to 65–73 ms (`bench/results/2026-09-28-coalesce/65-branchmap.out`).
 
 **What's left:** 1.8 s on disk against 0.76 s in memory at 1,000 threads. Forks and merges still take the branch map for writing and append to the log while they hold it; the 29% of waits left in `Core::branch` are probably each agent's first lookups while 1,000 forks take the map at the start. Logging a merge's batch before it takes its locks made the 1,000-thread run slower (2.35 s), so it isn't in. Next would be not logging while holding the map for writing, or sharding the map.
 
