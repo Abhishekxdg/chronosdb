@@ -15,7 +15,7 @@ merge world agent_7;        -- into main; the session moves back to main
 ## Names and moments
 
 - **World names:** a bare name (`agent_7`), a double-quoted name (`"agent-7"`), or a string (`'agent-7'`). A name with a dash must be quoted: `task-1` unquoted fails with 42601 `world names with a dash need quotes`.
-- **Reserved:** a name can't be empty or contain `@` (42602), or start with `_tx_` (42939: transactions use those).
+- **Reserved:** a name can't be empty or contain `@` (42602), start with `_tx_` (42939: transactions use those), or be one of MERGE's own words, in any case: `using`, `ours`, `theirs`, `confirm`, `by`, `resolve`, `dry`, `into`, `only` (42939). `MERGE WORLD ours` reads `ours` as MERGE's word, so a world named so couldn't be merged unquoted. A world given such a name before this rule still loads; merge it quoted: `MERGE WORLD "ours"`. A MERGE that names no world while on `main` fails with 0A000 and says this.
 - **A world ID** works wherever a world is read or switched to: `switch world '<id>'`, `fork world '<id>' as b`.
 - **A world as it was:** `'name@when'`, read only. Works in `DIFF ... TO` (either side), `FORK WORLD` / `CREATE WORLD ... FROM`, `SIMULATE ... FROM`, and as a Postgres database name (the whole session reads the past; writes fail with 25006).
 - **`when`** is one of:
