@@ -2,34 +2,60 @@
 
 > The numbers and methods are public; the harness code that produced them lives with the engine's source, which is private.
 
-**Hardware.** Sections 1–7 come from one machine: an Apple M2 (8 cores) with 8 GB of RAM, running macOS 26. Section 8 reruns the losses on a Linux server (4 vCPUs, 32 GB). Sections 9–12 are on the same M2, while other sessions were building and benchmarking on it, so each gives its load average. The data is synthetic and deterministic, and every run uses the same seeds, except the real embeddings of sections 6 and 8.
+**Machine.** Unless a section says otherwise, everything here was rerun end to end on 2026-09-28 on one Linux server: GCP `c2d-standard-32` (32 vCPUs: an AMD EPYC 7B13, 16 cores with 2 threads each; 128 GB of RAM; a 500 GB pd-ssd; Ubuntu 24.04). Every rival ran on the same machine, driven by the same client as Chronos DB, one job at a time on an otherwise idle machine (a queue ran the jobs; each section gives the load average where it matters). The raw output of every run, and the script that made it, is in [`bench/results/2026-09-28-rerun/`](bench/results/2026-09-28-rerun).
 
-**What that means for the numbers.** Disk timings on macOS vary a lot from run to run, because `fsync` (`F_FULLFSYNC`) takes a variable amount of time. Wherever runs differed, a range is given. The 8 GB of RAM also limited how big the search tests could get. These are laptop numbers, not published results; the plan is to rerun them on a machine with 16 GB or more before quoting them.
+**The machine changed.** Earlier editions of this page ran on an 8 GB Apple M2 laptop (sections 1–7 and 9–12, often while other builds ran on it) and on a 4-vCPU, 32 GB GCP VM (section 8). Where a result changed, the old figure is given beside the new one. Numbers from different machines don't compare directly: one of these cores is slower than one of the M2's, and there are four times as many.
 
-**Rerunning them.** Every harness is in `examples/`, so anyone can rerun them. Losses are reported here along with the wins.
+**Chronos build.** Most Chronos numbers are `0f1a19af`: `main` at `368410af` (which keeps query threads between queries, and uses mimalloc on Linux) plus one fix this rerun found (section 6). Runs marked `8db2f701` used `main` from before those changes. Section 4's joins and reports also show `cf1c9f3a`, which adds #22 (small tables split into more parts): it changes nothing at 200,000 rows, but a lot at 20,000 (the protocol join + `GROUP BY` went from 7.0 to 4.4 ms). The rivals' numbers don't depend on which Chronos build ran beside them.
+
+**Rivals.** Postgres 17.11 and 16.15, pgvector 0.8.6, pgvectorscale 0.9.1, SQLite (bundled with rusqlite), Dolt 2.3.5, DuckDB 1.5.5, Qdrant 1.19.1, Chroma 1.5.9, LanceDB 0.39, Milvus 3.0.1, Weaviate 1.39.7, Elasticsearch 9.5.4, OpenSearch 3.8.0 and Redis 8.10.2 (the last five in Docker). Each runs at its defaults unless a section says otherwise, and never tuned below them. Recall is always shown beside speed, because the defaults trade the two differently. Neon wasn't rerun (it needs an API key this run didn't have); its numbers are from 2026-09-27.
+
+**Rerunning them.** Every harness is in [`examples/`](examples) and [`bench/`](bench), including the rival races (`bench/rivals/forks.py`). Losses are reported here along with the wins, and listed first.
+
+## Where Chronos DB loses
+
+| against | workload | Chronos DB | rival | section |
+|---|---|---|---|---|
+| **DuckDB 1.5.5** | analytics reports over 200,000-row tables | 2.8–25.4 ms | 0.4–8.3 ms: **2.2–7× faster** | [4](#4-sql-over-the-postgres-protocol) |
+| **pgvector 0.8.6** | vector search median, all rows, 1M real embeddings, both at defaults | 4.69 ms at 99.3% recall | **2.40 ms**, at 92.8% recall. Raised to 98.6% recall, pgvector takes 13.5 ms. | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+| **Weaviate, Chroma, Milvus, Elasticsearch, LanceDB** | vector search median, all rows, 1M real embeddings | 4.69 ms at 99.3% recall | 2.25–3.92 ms, at 85.0–98.2% recall (Weaviate: 2.48 ms at 98.2%) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+| **Postgres 17** | merge p50, 1,000 agents on disk, one thread per agent | 1,231 ms | **128 ms** (25 workers) | [1](#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
+| **its own target** | vector search inside a fork, against main, 1M rows | 1.55× main (no filter), 1.12× (text) | target: within 1.1× | [3](#3-hybrid-search-inside-branches-phase-3-targets-p99--5-ms-at-1m-fork-within-10-of-main) |
+| **its own gate** | filtered vector search at 10%, 500k × 384, against tuned pgvector | 0.93 ms | 1.17–1.22 ms: only 1.3×, under the 5× gate | [2](#2-vector-search-vs-postgres--pgvector-phase-1-kill-gate-5-pgvector) |
+| **Redis 8.10** | vector search median, all rows, 76k and 1M real embeddings | 0.72–0.74 ms, 4.69 ms | **0.46 ms, 0.50 ms**, at 75.0% and 74.2% recall (Chronos: 99.98%, 99.3%) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+| **LanceDB 0.39** | loading 76k × 1,536 vectors | 4.7 s | **1.0 s** (in its own process, from an Arrow table) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+| **Weaviate, Redis** | one-user (1%) vector search p99, 76k | 2.1–2.3 ms | **1.46 ms, 1.23 ms** | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+| **Postgres 17** | one order joined to its row by key, over the protocol | 52 µs | **50 µs** | [4](#4-sql-over-the-postgres-protocol) |
+| **Redis, Weaviate** | server memory after the 76k run | 1.14 GB (2.3 GB at its peak) | 1.05 GB, 1.10 GB | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+| **Milvus, Qdrant, OpenSearch** | server memory at 1M real embeddings | 7.7 GB after the run, 14.4 GB at its peak | 5.2 GB, 6.6 GB, 8.9 GB after (6 GB of raw vectors) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+
+The merge row's cause is found and its fix is being built (section 1, TODOS.md). No longer losses: the 8.6 ms vector p99 of this rerun's first runs was a readiness bug, fixed in the same change (section 6); the protocol join + `GROUP BY` is 4.4 ms against Postgres's 6.9 ms since #22 (section 4); and the slow checkpoint and reopen at 100,000 worlds came from the loaded laptop (section 9).
 
 ## 1. Forks and concurrent writes (Phase 1 kill gate: 10× Postgres)
 
-`cargo run --release --example bench -- 10 100 1000`, with 100k seed rows in main. Each agent forks main, writes 1,000 rows and merges back.
+`cargo run --release --example bench -- 10 100 1000`, with 100k seed rows in main. Each agent forks main, writes 1,000 rows and merges back. Chronos runs in process; the others through their usual Rust or Python clients, on the same machine.
 
 | agents | system | fork p50 | merge p50 | total time | agent rows/s |
 |---|---|---|---|---|---|
-| 10 | Chronos (memory) | 0.002 ms | 4.3 ms | 0.01 s | 938k |
-| 10 | SQLite (file copy) | 0.6 ms | 308 ms | 0.56 s | 17.8k |
-| 10 | Postgres (template DB) | 9,662 ms | 246 ms | 10.6 s | 945 |
-| 100 | Chronos (memory) | 0.001 ms | 45 ms | 0.11 s | 892k |
-| 100 | SQLite | 2.2 ms | 2,335 ms | 10.3 s | 9.7k |
-| 100 | Postgres | 9,482 ms | 332 ms | 44.5 s | 2.2k |
-| 1,000 | Chronos (memory) | 0.001 ms | 736 ms | 1.6 s | 631k |
-| 1,000 | SQLite | 12,097 ms | 14,703 ms | 730 s | 1.4k |
-| 1,000 | Postgres | 10,388 ms | 348 ms | 533 s | 1.9k |
+| 10 | Chronos (memory) | 0.009 ms | 3.4 ms | 0.01 s | 1.23M |
+| 10 | SQLite (file copy) | 6.3 ms | 190 ms | 0.79 s | 12.6k |
+| 10 | Postgres 17 (template DB) | 3,553 ms | 68 ms | 4.1 s | 2.4k |
+| 100 | Chronos (memory) | 0.009 ms | 33 ms | 0.07 s | 1.33M |
+| 100 | SQLite | 16 ms | 1,064 ms | 10.0 s | 10.0k |
+| 100 | Postgres 17 | 2,169 ms | 127 ms | 11.2 s | 8.9k |
+| 1,000 | Chronos (memory) | 0.005 ms | 322 ms | 0.77 s | 1.29M |
+| 1,000 | SQLite | 2,762 ms | 3,113 ms | 404 s | 2.5k |
+| 1,000 | Postgres 17 | 2,133 ms | 128 ms | 102 s | 9.8k |
 
-With durability on (`chronos-disk` in the same harness: write-ahead log, fsync on merge, background checkpoints), three runs after the final Phase 2 changes gave:
-- **10 agents:** 268k–477k rows/s.
-- **100 agents:** 666k–787k rows/s.
-- **1,000 agents:** 365k–646k rows/s.
+On disk (`chronos-disk`: write-ahead log, fsync on every merge into main, background checkpoints), agent rows/s:
 
-**On disk at 1,000 agents, rerun on 32 cores** (GCP c2d-standard-32, 2026-09-28; two rounds, before and after alternating; before is `main` at `368410af`, after writes each world's rows to the log in batches, see section 8):
+| agents | one thread per agent | 25 workers | 64 workers |
+|---|---|---|---|
+| 10 | 396k | 405k | 409k |
+| 100 | 459k | 621k | 555k |
+| 1,000 | **207k** | 543k | 456k |
+
+These on-disk runs are from before an open world's writes reached the log in batches (section 8). **With that fix, at 1,000 agents** (same machine, two rounds, before and after alternating; before is `main` at `368410af`):
 
 | threads | before | after | in memory (no log) |
 |---|---|---|---|
@@ -39,21 +65,37 @@ With durability on (`chronos-disk` in the same harness: write-ahead log, fsync o
 
 At 100 agents: 0.22 s before, 0.10–0.11 s after. Merge p50 at one thread per agent went from 1,231–1,263 ms to 576–622 ms.
 
-**Verdict:** even on disk, Chronos is about 190–340× Postgres at 1,000 agents. The gate passes.
+**Verdict:** on disk, Chronos was 21–55× Postgres at 1,000 agents before the batching fix (on the M2 it was 190–340×: this machine's Postgres is much faster, 9.8k rows/s against 1.9k), and the fix widens that. The gate passes.
 
 **How the baselines were set up:**
-- **SQLite:** a branch is a file copy, and the merge is a full-table `EXCEPT`, because file copies don't track changes. It's capped at 64 workers by the macOS file-descriptor limit.
-- **Postgres:** a branch is `CREATE DATABASE … TEMPLATE`. The template can't have connections, so agents fork a frozen copy rather than live main. The merge replays the agent's known writes, which is a generous shortcut. It's capped at 25 workers because `max_connections` is 100.
+- **SQLite:** a branch is a file copy, and the merge is a full-table `EXCEPT`, because file copies don't track changes. Capped at 64 workers.
+- **Postgres:** a branch is `CREATE DATABASE … TEMPLATE`. The template can't have connections, so agents fork a frozen copy rather than live main. The merge replays the agent's known writes, which is a generous shortcut. Capped at 25 workers because `max_connections` is 100.
+
+### Against Dolt and Postgres, same machine (`bench/rivals/forks.py`)
+
+`python bench/rivals/forks.py dolt 10 100 1000`, then `WORKERS=64 ONLY=chronos-disk cargo run --release --example bench -- 10 100 1000` straight after, twice (build `8db2f701`). **Dolt 2.3.5** runs as `dolt sql-server`, driven over the MySQL protocol: a fork is `CALL DOLT_BRANCH`, the writes go to the branch's revision database in batches of 100 rows (one transaction, then `DOLT_COMMIT`), and the merge is a real `CALL DOLT_MERGE` into main, retried if main moved under it (no retries were needed). 64 workers each.
+
+| agents | Chronos on disk | Dolt | | fork p50: Chronos · Dolt | merge p50: Chronos · Dolt |
+|---:|---:|---:|---:|---:|---:|
+| 10 | 388k–400k rows/s | 17.9k | **22×** | 0.02 ms · 8–15 ms | 4.4–4.9 ms · 9–10 ms |
+| 100 | 519k–531k | 26.5k–26.9k | **20×** | 0.06–0.08 ms · 43–54 ms | 13–19 ms · 247–295 ms |
+| 1,000 | 457k | 28.3k–28.4k | **16×** | 0.008 ms · 24 ms | 11–12 ms · 855–877 ms |
+
+On the 4-vCPU VM (2026-09-24) the gap was 18×, 18× and 11×, and Chronos lost fork p50 at 1,000 agents (59 ms against 26 ms): that was 1,000 threads on 4 cores. At equal workers on 32 cores Chronos forks in 8 µs.
+
+The same harness's Postgres mode (template databases, Python client, 25 workers) gave 2.1–2.2 s per fork and 9.6k–9.9k rows/s at 100 and 1,000 agents, as the Rust harness above did.
+
+**Neon** (not rerun; 2026-09-27, from the 4-vCPU VM in Mumbai to Neon's nearest region, Singapore, 64 ms away): a fork is a branch with its own compute, ready when it answers `SELECT 1`; Neon has no merge, so an agent's rows are replayed into `main`; 5 agents at a time, the free plan's branch limit. 10 and 100 agents: fork p50 3.7 s and 2.3 s, 783 and 1,051 agent rows/s (`bench/results/2026-09-27-vector-load/20-neon.out`).
 
 **Fast copies that don't merge (not measured by us):** two newer ways to copy a Postgres database quickly still stop at the copy.
 - **Postgres 18 clones:** `CREATE DATABASE … TEMPLATE src STRATEGY FILE_COPY` with [`file_copy_method = clone`](https://www.postgresql.org/docs/18/runtime-config-resource.html) copies the files with `copy_file_range()`, which XFS or Btrfs can do by sharing blocks. It's still a whole database per copy, with a checkpoint before and after, and [no other session may be connected to the source while it copies](https://www.postgresql.org/docs/18/sql-createdatabase.html), so a live `main` can't be forked. There is no diff and no merge back.
 - **Xata** (open source, Apache 2.0): [copy-on-write branches at the storage layer](https://xata.io/blog/open-source-postgres-branching-copy-on-write) under unmodified Postgres, instant whatever the size. Its docs answer "Can I merge branches?" with ["No"](https://xata.io/docs/core-concepts/branching): schema changes are applied to each branch by migration, and data doesn't flow back.
 
-Neither returns an agent's changes as rows or its conflicts as data; Dolt (above) and Chronos do.
+Neither returns an agent's changes as rows or its conflicts as data; Dolt and Chronos do.
 
 **Losses and caveats:**
-- **Merge queueing:** Chronos's median merge at 1,000 agents is slower than Postgres's (736 ms vs 348 ms), because merges into `main` queue behind each other. A single merge takes about 4 ms. **Unfair setup:** the Chronos run had one thread per agent (1,000 merges queued at once), while Postgres was capped at 25 workers. At the same 25 workers (`WORKERS=25`), the Chronos median is 39–46 ms. See section 8.
-- **Forks under heavy load:** fork p99 at 1,000 agents reaches about 190 ms, from scheduling 1,000 OS threads on 8 cores.
+- **Merges on disk with one thread per agent.** At 1,000 agents, merge p50 was 1,231 ms against Postgres's 128 ms before writes reached the log in batches, and 576–622 ms after; the run takes 1.84–1.98 s (was 4.96–5.06 s) against 1.43–1.46 s at 25 workers. Merges into `main` queue behind each other.
+- **Fork p99 under heavy load:** 54 ms at 1,000 threads on disk (measured before the batching fix), from the same contention.
 - **Merge p50 at 25 workers rose on disk** with batched writes (4.9–6.2 ms to 26.6–27.4 ms): agents now reach their merges sooner and queue on `main` together, and a merge logs its world's rows. The run as a whole is 26% faster.
 
 ## 2. Vector search vs Postgres + pgvector (Phase 1 kill gate: 5× pgvector)
@@ -61,62 +103,79 @@ Neither returns an agent's changes as rows or its conflicts as data; Dolt (above
 `N=500000 OVERSAMPLE=100 EF=300 cargo run --release --example search`: 500k × 384-dimension synthetic clustered vectors, top 10, 500 queries per filter mix.
 
 Postgres got one documented tuning pass:
-- `shared_buffers = 2GB`, with the table and index prewarmed.
+- `shared_buffers = 8GB` (2 GB on the 8 GB laptop), with the table and indexes prewarmed (`pg_prewarm`).
 - HNSW with `ef_search = 300`.
 - `hnsw.iterative_scan = relaxed_order`.
 
-| filter | Chronos p50 | pgvector p50 | Chronos recall@10 | pgvector recall@10 |
-|---|---|---|---|---|
-| none | 2.0 ms | 47.7 ms | 100% | 97.2% |
-| 10% | 1.5 ms | 93.1 ms | 100% | 97.0% |
-| 1% | 0.50 ms | 20.2 ms | 97.3% | 80.0% |
-| 0.1% | 0.17 ms | 9.2 ms | 100% | 100% |
+| filter | Chronos p50 | p99 | pgvector p50 | p99 | Chronos recall@10 | pgvector recall@10 |
+|---|---|---|---|---|---|---|
+| none | 0.32 ms | 0.74 ms | 1.09–1.13 ms | 3.0–3.7 ms | 99.7% | 96.7% |
+| 10% | 0.93 ms | 2.01 ms | 1.17–1.22 ms | 3.0–3.2 ms | 100% | 96.3% |
+| 1% | 0.43 ms | 0.51 ms | 7.5–7.7 ms | 14.4–14.7 ms | 100% | 80.3% |
+| 0.1% | 0.14 ms | 0.17 ms | 3.9–6.8 ms | 4.4–6.9 ms | 100% | 100% |
 
-**Verdict:** 24–64× pgvector at p50. The gate passes.
+pgvector ranges are two runs (before and after prewarming). At its default `ef_search` (40), pgvector took 0.59, 0.92, 7.1 and 6.8 ms at 82.2%, 86.2%, 78.2% and 100% recall.
 
-**Rerun after the vector search changes of section 6** (Chronos DB alone, `N=500000 ONLY=chronos OVERSAMPLE=100 Q=300`): no filter 0.41 ms at 99.8%, 10% 0.83 ms at 100%, 1% 0.50 ms at 100% (was 97.3%), 0.1% 0.12 ms at 100%. The graph tested itself at 99.5% of the scan's top 10, so unfiltered searches walk it.
+**Verdict:** 1.3–47× pgvector at p50, with higher recall everywhere. **The 5× gate fails at the 10% filter** (1.3×); the other three pass. On the 8 GB laptop it was 24–64×: there pgvector had 2 GB of cache for its index and was partly disk-bound.
+
+### At 1M × 384 (journal task `p1-search-1m`)
+
+`N=1000000 OVERSAMPLE=100 EF=300 cargo run --release --example search`, the same tuning pass (8 GB fits the table and index; pgvector's index took 92 s to build, Chronos's graph 28 s):
+
+| filter | Chronos p50 | p99 | pgvector p50 | p99 | Chronos recall@10 | pgvector recall@10 |
+|---|---|---|---|---|---|---|
+| none | 0.74 ms | 0.90 ms | 1.56–1.61 ms | 4.8–6.7 ms | 100% | 91.8% |
+| 10% | 1.30 ms | 2.02 ms | 1.68–1.78 ms | 5.0–5.2 ms | 100% | 91.6% |
+| 1% | 0.64 ms | 0.77 ms | 6.3–6.4 ms | 16.6–17.1 ms | 100% | 88.6% |
+| 0.1% | 0.32 ms | 0.35 ms | 10.1–16.1 ms | 10.9–16.4 ms | 100% | 100% |
+
+On `8db2f701` (before query threads were kept between queries) Chronos's unfiltered search took 2.8 ms here and lost to pgvector; the parallel scan's thread start-up was most of it.
 
 **Losses and caveats:**
-- **Noisy worst cases on both sides:** p99 was unreliable, because 8 GB of RAM with both engines loaded caused swapping. Chronos p99 ranged from 0.8 to 9.8 ms, pgvector from 1 to 3 s.
-- **Untuned Postgres was disk-bound:** before tuning, with its default 128 MB `shared_buffers`, it took over 1.5 s per query at the 1% filter.
-- **1M rows untested here:** the run at 1M × 384 didn't fit in 8 GB, so it still needs a bigger machine.
+- **The 10% filter** is where pgvector comes closest: 1.3× at 500k, 1.3–1.4× at 1M.
+- **Untuned Postgres** (128 MB `shared_buffers`) is slower still; the tuning pass above is the fair comparison.
 
 ## 3. Hybrid search inside branches (Phase 3 targets: p99 < 5 ms at 1M, fork within 10% of main)
 
-`N=1000000 cargo run --release --example find`: 1M rows, 64-dimension vectors, and a fork with 500 changed rows.
+`N=1000000 cargo run --release --example find`: 1M rows, 64-dimension vectors, and a fork with 500 changed rows. Three runs:
 
 | query | main p50 | main p99 | fork / main (p50) |
 |---|---|---|---|
-| filter (1%) | 0.02 ms | 0.03–0.12 ms | 0.92–1.09× |
-| text | 0.27 ms | 0.7–1.2 ms | ~0.8× |
-| vector + filter (20%) | 0.7–0.8 ms | 1.2–4.3 ms | 0.83–1.05× |
-| vector, no filter | 1.5–2.0 ms | 2.1–5.6 ms | 0.76–0.99× |
-| filter + text + vector | 0.85–1.0 ms | 1.7–2.2 ms | 0.88–1.17× |
-| repeated query | 0.003 ms | 0.003 ms | 1.0× |
+| filter (1%) | 0.048–0.050 ms | 0.09–0.10 ms | 0.91–0.95× |
+| text | 0.37 ms | 0.40–0.41 ms | **1.12–1.13×** |
+| vector + filter (20%) | 0.98–0.99 ms | 1.03–1.04 ms | 1.03–1.05× |
+| vector, no filter | 1.34 ms | 1.44–1.45 ms | **1.55–1.58×** |
+| filter + text + vector | 1.98–2.08 ms | 2.11–2.18 ms | 1.03–1.05× |
+| repeated query | 0.008 ms | 0.010–0.012 ms | ~1.0× |
 
-**Verdict:** hybrid search p99 is about 2 ms at 1M rows, and forks search as fast as main. Both targets are met, within run-to-run noise of about ±15%.
+**Verdict:** the p99 target is met with room (at most 2.2 ms). **Forks within 10% of main is missed** for text (12–13% slower) and for unfiltered vector search (55–58% slower); filtered and hybrid searches in a fork are within 5%.
 
-**Caveats:**
-- **Unfiltered vector search** reached 5.6 ms p99 in one run, over the 5 ms target. The other runs were 2–3 ms.
-- **Only 64 dimensions tested at 1M;** 384 dimensions at 1M needs a bigger machine.
-- **Rerun after the vector search changes of section 6:** vector + filter 0.89 ms (p99 1.2 ms), vector alone 2.15 ms (p99 3.0 ms), filter + text + vector 2.28 ms (p99 3.7 ms), forks within 7% of main. Still under the 5 ms target, but the hybrid median rose from about 0.9 ms: 64-dimension searches now rescore 8× more candidates, which took unfiltered recall@10 at 1M from 91.2% to 99.4% (`N=1000000 DIM=64 ONLY=chronos cargo run --release --example search`).
+**Losses and caveats:**
+- **Unfiltered vector search in a fork:** 2.1 ms against 1.34 ms in main. The ratio got worse as main got faster: on `8db2f701` it was 4.3 ms in main and 1.14–1.16× in the fork. Probably the fork's 500 changed rows searched on their own and main's copies of them dropped from its results; not profiled yet.
+- **Only 64 dimensions at 1M here;** 384 dimensions at 1M are in section 2, and 1,536 in section 6.
+- `N=1000000 DIM=64 ONLY=chronos cargo run --release --example search`: 0.83 ms at 97.9% recall with no filter, 0.12–0.59 ms at 99.7–100% with filters.
 
 ## 4. SQL over the Postgres protocol
 
-`chronos serve` on one side and Postgres 16 on the other, both over TCP on the same laptop, with the Rust `postgres` driver (binary values) and `N=10000 cargo run --release --example sql`. The workload:
+`chronos serve` on one side and Postgres on the other, both over TCP on the same machine, with the Rust `postgres` driver (binary values) and `N=10000 cargo run --release --example sql`. The workload:
 - 10,000 single-row inserts, each its own commit.
 - 10,000 more rows in 1,000-row statements.
 - 10,000 lookups by primary key.
 - 1,000 updates by key.
 - 50 queries of `age = $1 AND name LIKE $2` over 20,000 rows. Chronos answers these from its search index; Postgres has no index on `age`.
 
-| system | inserts/s | batch rows/s | lookup p50 | lookup p99 | update p50 | filtered query p50 |
-|---|---|---|---|---|---|---|
-| Chronos | 341 | 125k | 40 µs | 85 µs | 3.0 ms | <1 ms |
-| Postgres, flushing to disk like Chronos (`wal_sync_method=fsync_writethrough`) | 322 | 130k | 40 µs | 86 µs | 4.5 ms | 1 ms |
-| Postgres, macOS default (`open_datasync`) | 9,275 | 484k | 40 µs | 54 µs | 0.12 ms | 1 ms |
+| machine | system | inserts/s | batch rows/s | lookup p50 | lookup p99 | update p50 | filtered query p50 |
+|---|---|---|---|---|---|---|---|
+| 32 cores | Chronos (`0f1a19af`, two rounds) | 2,395–2,543 | 290k–297k | 46–48 µs | 62–63 µs | 0.41–0.42 ms | <1 ms |
+| 32 cores | Postgres 17 (`fdatasync`, Linux's default) | 2,286–2,320 | 222k–223k | 46 µs | 63–66 µs | 0.43–0.46 ms | 1–2 ms |
+| 32 cores | Chronos, `synchronous_commit = off` (`8db2f701`) | 19,449 | 294k | 43 µs | 61 µs | 0.05 ms | <1 ms |
+| M2 | Chronos | 341 | 125k | 40 µs | 85 µs | 3.0 ms | <1 ms |
+| M2 | Postgres 16, flushing to disk like Chronos (`wal_sync_method=fsync_writethrough`) | 322 | 130k | 40 µs | 86 µs | 4.5 ms | 1 ms |
+| M2 | Postgres 16, macOS default (`open_datasync`) | 9,275 | 484k | 40 µs | 54 µs | 0.12 ms | 1 ms |
 
-**Verdict:** at equal safety, Chronos matches Postgres on writes and lookups and is faster on updates and on filtered queries.
+The 32-core rows are the chronos-bench VM (section header), `bench/results/2026-09-28-rerun/54-final-chronos.out` and `03-sql.out`; `0f1a19af` is `main` at `368410af` with the vector fix of section 6 (before #22). Both sides flush every commit to disk.
+
+**Verdict:** at equal safety, Chronos is level with Postgres on lookups and updates, and ahead on commits (3–11%), batches (about 30%) and filtered queries.
 
 **Joins and grouping.** Run over the same 20,000 rows, plus a 20,000-row `sql_orders` table pointing at them. These are reads, so the durability setting doesn't matter.
 
@@ -147,7 +206,19 @@ The M2 columns are the laptop runs this section began with. The 32-core columns 
 | join of both tables, then `GROUP BY` with `sum` | 123.9 | 29.4 | 47.8 | 175.2 | 33.1 | 25.3 | 68.6 |
 | `count(*)` of the join `WHERE name LIKE 'user 1%'` (111,111 users) | 107.1 | 22.5 | 29.4 | 129.6 | 25.3 | 18.6 | 45.2 |
 
-The 32-core columns are the chronos-bench VM (GCP c2d-standard-32, Linux, 2026-09-28). The `8db2f701` and Postgres 17 columns come from the benchmark rerun (two rounds, `bench/results/2026-09-28-rerun/04-report.out` on the `bench-rerun` branch). The `cf1c9f3a` column is medians of three rounds. `cf1c9f3a` keeps helper threads between queries (#21) and splits small tables into more parts (#22), which changes nothing at 200,000 rows. The example runs Chronos in process with the system allocator, so #17's mimalloc isn't in these numbers. A core of this VM is slower than an M2 performance core: one core took 175.2 ms for the join against the M2's 123.9. DuckDB 1.5.5, embedded, 32 threads, ran the same five queries in the same rerun: 0.4, 0.7, 4.4, 7.5 and 7.7 ms. That's 2–7× faster than Chronos.
+The 32-core columns are the chronos-bench VM (GCP c2d-standard-32, Linux, 2026-09-28). The `8db2f701` and Postgres 17 columns come from the benchmark rerun (two rounds, `bench/results/2026-09-28-rerun/04-report.out` on the `bench-rerun` branch). The `cf1c9f3a` column is medians of three rounds. `cf1c9f3a` keeps helper threads between queries (#21) and splits small tables into more parts (#22), which changes nothing at 200,000 rows. The example runs Chronos in process with the system allocator, so #17's mimalloc isn't in these numbers. A core of this VM is slower than an M2 performance core: one core took 175.2 ms for the join against the M2's 123.9.
+
+**Against DuckDB 1.5.5.** The same five reports in DuckDB, in process on a database file (`python bench/rivals/forks.py duckdb`: the same rows, loaded in the same 5,000-row statements, timed as `report.rs` times: best of 3 rounds of 5 after a warm-up), on the same VM, two runs; Chronos is the `0f1a19af` build of the rerun (`54-final-chronos.out`), Postgres 16 beside it:
+
+| query | Chronos, 32 cores | Postgres 16 | DuckDB, 1 thread | DuckDB, 32 threads |
+|---|---|---|---|---|
+| `count(*)` of orders | 2.7–2.8 | 6.8–7.0 | 0.3 | **0.4** |
+| `count(*)` of orders `WHERE amount > 500` | 4.0–4.1 | 8.8–8.9 | 0.7 | **0.6–0.7** |
+| `GROUP BY age` with `count(*)`, `max(name)` | 9.5–9.9 | 19.5–19.6 | 6.8 | **4.4** |
+| join of both tables, then `GROUP BY` with `sum` | 25.4–25.7 | 67.0–69.5 | 6.1–6.2 | **7.2–7.7** |
+| `count(*)` of the join `WHERE name LIKE 'user 1%'` | 18.3–18.5 | 43.8–44.4 | 9.0–12.9 | **7.1–8.3** |
+
+**A loss:** DuckDB is 2.2–7× faster than Chronos on every report (3.3–3.6× on the join + `GROUP BY`). It stores columns and runs vectorized code; Chronos stores rows, and decodes each to read a column. Chronos is 2.0–2.8× faster than Postgres 16 and 17 here. Columnar storage isn't planned for v0.1; row counts kept in the tree and per-page minimum and maximum values would narrow the gap on `count(*)` and range filters.
 
 Before this round, on one core, those were 26, 37, 63, 214 and 217 ms. Walking the table without copying each key, a hash index with no list per value, and `LIKE` without allocating account for the one-core gains; the cores do the rest. The join's hash table is also built on every core (rows split by hash into partitions, each indexed on its own), and a scan drops columns only its own filter reads (here `name`, once `LIKE` has passed it).
 
@@ -210,25 +281,85 @@ The protocol join + `GROUP BY` that started this, 11.5 ms against Postgres's 6.9
 
 ## 5. Crash safety
 
-These are correctness checks, not speed, but they belong on the record.
+These are correctness checks, not speed, but they belong on the record. Each ran on the PR build and on `8db2f701`.
 
 | Test | What it does | Result |
 |---|---|---|
-| Crash suite (`CRASH_RUNS=10000`) | Cuts the log at random bytes, with torn-write garbage and cleanup, then recovers | 10,000/10,000 recover exactly the operations that reached disk |
-| Deterministic simulation (`--features shuttle`) | Agents, direct writes, checkpoints and cleanup, all interleaved under controlled schedules | Passes. Found a planted ordering bug within about 3,000 schedules. |
-| Jepsen-style (`JEPSEN_KILLS=20`) | `kill -9` the server during concurrent fork/merge bank transfers | See below |
+| Crash suite (`CRASH_RUNS=10000`) | Cuts the log at random bytes, with torn-write garbage and cleanup, then recovers | 10,000/10,000 recover exactly the operations that reached disk, on both builds (132 s each) |
+| Deterministic simulation (`--features shuttle`, `SIM_ITERS=3000`) | Agents, direct writes, checkpoints and cleanup, all interleaved under controlled schedules | Passes on both (3,000 schedules each of its schedulers, 199–202 s). Earlier found a planted ordering bug within about 3,000 schedules. |
+| Jepsen-style (`JEPSEN_KILLS=20`, three runs) | `kill -9` the server during concurrent fork/merge bank transfers | 60 kills and 31,397 acknowledged transfers on the PR build, 60 and 32,723 on `8db2f701`: none lost, every balance matched the ledger |
 
 **What the Jepsen-style test found.** It found two real bugs before this release, and both are fixed:
 1. **Money created from nothing.** A merge treated "both sides wrote the same value" as no conflict. Two transfers that each debited an account from 100 to 90 became one, so money appeared. Merges now use first-merge-wins for rows both sides wrote.
 2. **Silent loss after a crash.** A branch's last write died with the process, the server restarted in milliseconds, and the client's merge of the now-empty branch returned success. Writes now return versions, merges check them, and branches open during a crash are flagged until confirmed.
 
-After the fixes, 15 runs of 20 kills each passed with no failures: 300 `kill -9`s and 108,178 confirmed transfers checked, none lost, and every balance matched the ledger.
+After the fixes, 15 runs of 20 kills each passed on the laptop with no failures (300 `kill -9`s, 108,178 confirmed transfers), and the 6 runs here (120 kills, 64,120 transfers) did too.
 
 ## 6. Vector search vs other vector databases, on real embeddings
 
-`python bench/vector_dbs.py` (see its header). **Data:** 76,924 real OpenAI embeddings (1,536 dimensions) of DBpedia entities, from Hugging Face's `KShivendu/dbpedia-entities-openai-1M` (its first two files). The last 500 are the queries and the other 76,424 are stored. **Filter:** each stored row gets a user (row % 100), so "one user" keeps 1% of the rows, as a memory layer such as Mem0 filters every search. **Method:** one client, one query at a time, query inputs prepared before timing, 20 warm-up queries, top 10, each system at its defaults. Recall@10 is measured against exact brute force over the same rows.
+`bench/vector_dbs.py` (see its header). **Data:** real OpenAI embeddings (1,536 dimensions) of DBpedia entities, from Hugging Face's `KShivendu/dbpedia-entities-openai-1M`: its first two files (76,924 vectors) and all 26 (1,000,000). The last 500 are the queries and the rest are stored. **Filter:** each stored row gets a user (row % 100), so "one user" keeps 1% of the rows, as a memory layer such as Mem0 filters every search. **Method:** one client, one query at a time, query inputs prepared before timing, 20 warm-up queries, top 10, each system at its defaults. Recall@10 is measured against exact brute force over the same rows. **Each system ran alone,** with its server started fresh for its run and stopped after (`bench/results/2026-09-28-rerun/vec.sh`).
 
-Chronos DB is queried through SQL over the Postgres protocol, exactly as Mem0's pgvector store queries it (`ORDER BY embedding <=> $1::vector LIMIT 10`, with `payload->>'user_id' = $2` for one user), after `CREATE INDEX ... USING hnsw`.
+Chronos DB is queried through SQL over the Postgres protocol, exactly as Mem0's pgvector store queries it (`ORDER BY embedding <=> $1::vector LIMIT 10`, with `payload->>'user_id' = $2` for one user), after `CREATE INDEX ... USING hnsw`. pgvector and pgvectorscale get the same SQL; pgvector's index build gets `maintenance_work_mem` of 1 GB at 76k and 16 GB at 1M, so its graph fits in memory as its docs advise. Load time leaves out each client's own conversion of rows; "index" is what's left to wait for after the load (Qdrant, Weaviate, Chroma and Redis build as rows arrive, so theirs is in the load).
+
+### 76,424 vectors
+
+| system | load | index | all rows: p50 | p99 | recall@10 | one user: p50 | p99 | recall@10 | memory after |
+|---|---|---|---|---|---|---|---|---|---|
+| **Chronos DB** (SQL) | 4.7 s | 6.8 s | 0.72–0.74 ms | 2.1–2.7 ms | **99.98%** | **0.61–0.65 ms** | 2.1–2.3 ms | 100% | 1.14 GB |
+| Redis 8.10 | 8.2 s | — | **0.46 ms** | **1.98 ms** | 75.0% | 1.09 ms | **1.23 ms** | 100% | 1.05 GB |
+| pgvector 0.8.6 | 3.8–3.9 s | 46 s | 1.01–1.03 ms | 2.33–2.35 ms | 82.0% | 13.0 ms | 13.3–13.4 ms | 100% | — |
+| Milvus 3.0.1 | 7.8 s | 6.8 s | 1.64 ms | 2.06 ms | 89.2% | 1.73 ms | 1.95 ms | 99.7% | 1.42 GB |
+| Weaviate 1.39.7 | 21.8 s | — | 1.82 ms | 2.31 ms | 97.0% | 1.35 ms | 1.46 ms | 100% | 1.10 GB |
+| Chroma 1.5.9 (embedded) | 26.8 s | — | 1.94 ms | 2.19 ms | 92.6% | 36.5 ms | 39.4 ms | 100% | — |
+| pgvectorscale 0.9.1 | 3.8 s | 75.5 s | 1.95 ms | 2.32 ms | 97.5% | 15.1 ms | 26.1 ms | 74.9% | — |
+| Elasticsearch 9.5.4 | 102.2 s | 0.7 s | 3.24 ms | 7.18 ms | 90.8% | 2.83 ms | 3.75 ms | 99.8% | 32.7 GB |
+| LanceDB 0.39 (embedded) | **1.0 s** | 9.4 s | 3.30 ms | 3.79 ms | 85.0% | 4.66 ms | 5.15 ms | 97.0% | — |
+| Qdrant 1.19.1 | 86.5 s | 1.0 s | 3.73 ms | 5.47 ms | 98.8% | 2.63 ms | 4.21 ms | 100% | 2.4 GB |
+| OpenSearch 3.8.0 | 105.2 s | 44.3 s | 5.12 ms | 7.57 ms | 96.6% | 2.49 ms | 3.48 ms | 100% | 2.5 GB |
+
+Chronos ranges are two runs of the PR build; the others ran once each, and pgvector twice. Memory is the server's resident memory once the run was over (Chronos peaked at 2.3 GB); "—" is in the benchmark's own process or not measured.
+
+**Verdict:** the best recall of the eleven, and the fastest median of every system that finds more than 75% of the true top 10. Redis is faster at its defaults, at 75% recall (its default search beam, `EF_RUNTIME`, is 10).
+
+### 999,500 vectors
+
+| system | load | index | all rows: p50 | p99 | recall@10 | one user: p50 | p99 | recall@10 | memory after |
+|---|---|---|---|---|---|---|---|---|---|
+| **Chronos DB** (SQL) | 64.0 s | 147 s | 4.69 ms | 6.74 ms | **99.3%** | **3.68 ms** | **5.24 ms** | **100%** | 7.7 GB (14.4 GB peak) |
+| Redis 8.10 | 208 s | — | **0.50 ms** | **2.23 ms** | 74.2% | 11.1 ms | 11.9 ms | 100% | 13.2 GB |
+| Chroma 1.5.9 (embedded) | 586 s | — | 2.25 ms | 2.74 ms | 96.8% | 265 ms | 290 ms | 99.7% | — |
+| pgvector 0.8.6 | 88.6 s | 427 s | 2.40 ms | 4.03 ms | 92.8% | 30.9 ms | 59.1 ms | 94.6% | — |
+| Weaviate 1.39.7 | 362 s | — | 2.48 ms | 3.70 ms | 98.2% | 8.47 ms | 9.88 ms | 100% | 11.9 GB |
+| LanceDB 0.39 (embedded) | **12.0 s** | 148 s | 3.43 ms | 3.95 ms | 85.0% | 28.0 ms | 29.4 ms | 96.7% | — |
+| Elasticsearch 9.5.4 | 1,612 s | 129 s | 3.56 ms | 8.03 ms | 94.9% | 3.47 ms | 16.9 ms | 61.3% | 33.0 GB |
+| Milvus 3.0.1 | 125 s | 35.8 s | 3.92 ms | 6.17 ms | 97.3% | 3.89 ms | 5.72 ms | 99.7% | 5.2 GB |
+| Qdrant 1.19.1 | 1,372 s | 6.2 s | 6.67 ms | 10.57 ms | 99.0% | 5.83 ms | 7.36 ms | 99.98% | 6.6 GB |
+| pgvectorscale 0.9.1 | 90.3 s | 2,342 s | 8.33 ms | 13.44 ms | 96.6% | 51.4 ms | 103.6 ms | 69.8% | — |
+| OpenSearch 3.8.0 | 1,431 s | 363 s | 10.06 ms | 12.28 ms | 98.5% | 4.83 ms | 20.8 ms | 80.6% | 8.9 GB |
+
+**Verdict at 1M: the best recall, and the fastest filtered search that keeps it; not the fastest unfiltered search.** Seven systems answer an all-rows search faster at their defaults, all with lower recall. Weaviate is the closest: 1.9× faster at 1.1 points less recall. Filtered to one user, Chronos is the fastest of the systems that keep 99.7% recall or more (Milvus 3.89 ms, Qdrant 5.83 ms, Weaviate 8.47 ms).
+
+**pgvector at matched recall.** Defaults trade recall for speed differently, so pgvector's search beam was raised on the same 1M table (`bench/rivals/pgvector_ef.py`, HNSW index rebuilt as above; the sweep was stopped after 400):
+
+| pgvector `hnsw.ef_search` | all rows: p50 | p99 | recall@10 | one user: p50 | recall@10 |
+|---|---|---|---|---|---|
+| 40 (default) | 2.43 ms | 3.97 ms | 92.1% | 32.0 ms | 94.6% |
+| 80 | 3.96 ms | 6.54 ms | 95.9% | 91.8 ms | 100% |
+| 120 | 5.33 ms | 9.02 ms | 97.0% | 91.9 ms | 100% |
+| 200 | 7.75 ms | 13.28 ms | 97.9% | 91.9 ms | 100% |
+| 300 | 10.60 ms | 18.91 ms | 98.3% | 91.8 ms | 100% |
+| 400 | 13.54 ms | 24.08 ms | 98.6% | 92.0 ms | 100% |
+| *Chronos DB, defaults* | *4.69 ms* | *6.74 ms* | *99.3%* | *3.68 ms* | *100%* |
+
+pgvector never reached Chronos's recall; at 98.6% it's 2.9× slower than Chronos, and at 95.9% already about as slow. A sweep of the other systems' settings hasn't been run.
+
+### The p99 this rerun found, and fixed
+
+The first 76k runs gave Chronos a p99 of 7.8–8.6 ms against a 1 ms median, even with Chronos running alone. Over three passes of the same 500 queries, the slow ones were all in the first pass and weren't the same queries as the slowest later ones (correlation 0.06; `19-p99diag.out`): p99 8.0 ms, then 1.09 and 1.08 ms. The cause: after an index builds its HNSW graph, it tests it with 128 exact searches spread over every core, and the server said its graphs were built (`search_graphs_building` 0) as soon as the graph existed, before that test ended. So the benchmark, which waits for that signal, timed Chronos's first searches against the test; every other system was timed after its own indexing ended. A graph now counts as built once it has tested itself (`src/search.rs`). With the fix the p99 is 2.1–2.7 ms and the index takes 6.8 s instead of 5.2 s: the wait now includes the test.
+
+### How it got here (8 GB M2 laptop, 76k vectors)
+
+The first edition's table: one run, the five systems one after another on a loaded laptop with 9–10 GB of swap in use. It doesn't compare with the tables above.
 
 | system | load | index | all rows: p50 | p99 | recall@10 | one user: p50 | p99 | recall@10 |
 |---|---|---|---|---|---|---|---|---|
@@ -237,8 +368,6 @@ Chronos DB is queried through SQL over the Postgres protocol, exactly as Mem0's 
 | Chroma (embedded) | 85.9 s | (in load) | 3.44 ms | 9.35 ms | 93.3% | 75.5 ms | 136 ms | 100% |
 | Postgres 17 + pgvector 0.8.4 | 75.0 s | 252.0 s | 4.06 ms | 6.89 ms | 82.5% | 10.1 ms | 14.8 ms | 100% |
 | Qdrant 1.19 (Docker) | 144.7 s | 14.5 s | 5.14 ms | 17.9 ms | 93.6% | 4.22 ms | 11.3 ms | 100% |
-
-**Verdict:** the fastest median and the best recall of the five, over all rows and for one user.
 
 **How it got here** (all on this data, same laptop):
 
@@ -253,23 +382,22 @@ Chronos DB is queried through SQL over the Postgres protocol, exactly as Mem0's 
 **Why not the graph on this data:** the graph walked on 1-bit codes answers in about 0.35 ms at a beam of 400, but finds only 92.8% of the true top 10: DBpedia holds many near-duplicate entities, and a graph navigates poorly among them. The 1-bit scan with full-precision rescoring finds 99.98% in about 0.6 ms (`examples/walk.rs`). Chronos DB measures its graph when it's built and uses it only if it scores at least 98% against the scan; on synthetic clustered vectors (section 2) it scores 99.5% and is used.
 
 **Losses and caveats:**
-- **One run on a loaded laptop.** 8 GB of RAM with about 9–10 GB of swap in use from other programs, so p99s are noisy (Chronos DB's worse p99 than LanceDB's likely includes that; it hasn't been separated). On a 32 GB Linux machine (section 8), Chronos DB's p99 is 6.38 ms against LanceDB's 17.07 ms.
-- **Defaults, not tuned to equal recall.** pgvector's `ef_search` is 40 and LanceDB's IVF index scans few partitions by default; raising them buys recall with time. A recall-versus-latency curve per system is the fairer comparison and hasn't been run.
-- **In-process vs over the network:** LanceDB and Chroma answer in the benchmark's own process; Chronos DB, Postgres and Qdrant answer over TCP.
-- **Loading** differs by client: Chronos DB and Postgres get `INSERT`s of 1,000 rows per transaction with vectors as text, Qdrant batched upserts over HTTP, Chroma and LanceDB in-process writes. Chronos DB's "index" time includes building its search index and graph and the graph's self-test.
-- **The load times above include Python** turning every float into text: at 20,000 rows that alone took 18.4 s, more than the database's own work. The harness now leaves each client's row conversion out of load time, and sends 100 rows per `INSERT` (section 8).
-- **Chronos DB's memory:** the server held about 830 MB after the run.
+- **Unfiltered search at 1M:** seven systems are faster at their defaults (above). Where Chronos's 4.7 ms goes at this size hasn't been profiled yet.
+- **Memory:** at 1M the Chronos server peaked at 14.4 GB and held 7.7 GB after, against 6 GB of raw vectors; at 76k, 2.3 GB at its peak. Not yet investigated.
+- **Loading:** LanceDB takes an Arrow table in its own process (1.0 s at 76k, 12 s at 1M); Chronos gets rows over the Postgres protocol, in binary (4.7 s, 64 s).
+- **In-process vs over the network:** LanceDB and Chroma answer in the benchmark's own process; the others over TCP (Chronos, Postgres) or HTTP and gRPC.
+- **Elasticsearch** gives itself up to half the machine's memory by default (32–33 GB here), and **Qdrant**'s loads include JSON over HTTP, per its default client: 23 minutes at 1M.
 - **What only Chronos DB was asked to do:** every row is also in a world that can fork in about a microsecond (section 1); no other system here can branch.
 
 ## 7. Undoing an agent
 
 `ROWS=500000 AGENT=100000 OTHERS=50000 cargo run --release --example undo_agent`: 500k rows in main. An agent changes 100k of them straight in main (no world, no approval), in ten 10k-row statements. Then a person changes 50k other rows and 100 of the agent's.
 
-| step | time |
-|---|---|
-| load 500k rows | 12.0 s |
-| the agent's 100k changes | 12.6 s |
-| `UNDO AGENT bot SINCE ... SKIP CHANGED` | 6.2 s |
+| step | time | on the M2 |
+|---|---|---|
+| load 500k rows | 3.1 s | 12.0 s |
+| the agent's 100k changes | 1.0 s | 12.6 s |
+| `UNDO AGENT bot SINCE ... SKIP CHANGED` | 1.47 s | 6.2 s |
 
 **Result:** 99,900 rows put back and 100 left as the person changed them. None of the agent's values remain, and all 50,100 of the person's changes are kept.
 
@@ -298,6 +426,8 @@ Chronos DB is queried through SQL over the Postgres protocol, exactly as Mem0's 
 **What's left:** after the fix, 2% of context switches wait for the log and 67% for the branch map's lock (`Core::branch`): forks and merges take it for writing, and append to the log while they hold it, so each one parks the thousand writers looking up their world. fsyncs are 9%. Logging a merge's batch before it takes its locks made the 1,000-thread run slower (2.35 s), so it isn't in.
 
 ### The losses of sections 1, 4 and 6
+
+*History (2026-09-24, a 4-vCPU VM).* This section reran the laptop's losses on a small Linux VM and recorded the fixes they led to. Every number in it is from that VM; where each loss stands now is in sections 1, 4 and 6, and in "Where Chronos DB loses" at the top.
 
 **Machine:** GCP e2-highmem-4 (4 vCPUs, 32 GB, x86-64, Ubuntu 24.04, balanced persistent disk), glibc builds, no swap in use. **Before** is `main` at `0b4f867`; **after** is the `losses` branch at `b5ae045`. Each harness ran against both builds back to back, under the machine's shared benchmark lock, starting with a load average under 1. **Others:** Postgres 17.11 and pgvector 0.8.6 at their defaults (on Linux, `fdatasync` on commit, which flushes like Chronos), and LanceDB 0.39 embedded.
 
@@ -381,40 +511,41 @@ What remains in the profile is the two key lookups the join needs.
 
 ## 9. Many worlds: 10 to 100,000
 
-`SWEEP=1 ROWS=100000 cargo run --release --example worlds`: for each size, a fresh database on disk with 100,000 rows in main, then that many worlds forked from main, each writing one row of its own. Same M2 with 8 GB, but shared: other sessions were compiling and benchmarking, so the load average was 70–90 during this run (8 cores) with about 6 GB of swap in use. Memory is the process's physical footprint (what `top` shows, swapped pages included); CPU is user + system time for the forks and writes.
+`SWEEP=1 ROWS=100000 cargo run --release --example worlds`: for each size, a fresh database on disk with 100,000 rows in main, then that many worlds forked from main, each writing one row of its own. Load average about 3. Memory is the process's resident memory added by the worlds; CPU is user + system time for the forks and writes.
 
 | worlds | fork p50 | fork p99 | first write p50 | write p99 | point query, main / world | aggregate, main / world | disk after checkpoint | disk per world | memory added | per world | CPU | checkpoint | reopen |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 10 | 2.1 µs | 65 µs | 12 µs | 371 µs | 160 / 16 µs | 15.5 / 22.7 ms | 6.1 MB | 447 B | 0.1 MB | — | 0.00 s | 88 ms | 12 ms |
-| 100 | 2.0 µs | 19 µs | 10 µs | 269 µs | 43 / 27 µs | 10.9 / 13.5 ms | 6.2 MB | 437 B | 0.0 MB | — | 0.00 s | 31 ms | 4 ms |
-| 1,000 | 2.1 µs | 10 µs | 11 µs | 87 µs | 30 / 20 µs | 11.1 / 13.9 ms | 6.6 MB | 442 B | 2.5 MB | 2.5 KB | 0.01 s | 39 ms | 7 ms |
-| 10,000 | 2.1 µs | 7 µs | 12 µs | 99 µs | 21 / 31 µs | 17.5 / 16.3 ms | 10.6 MB | 449 B | 32 MB | 3.2 KB | 0.15 s | 245 ms | 71 ms |
-| 100,000 | 2.2 µs | 9 µs | 12 µs | 137 µs | 17 / 16 µs | 15.8 / 16.9 ms | 51.7 MB | 456 B | 380 MB | 3.8 KB | 1.48 s | 8.3 s | 3.5 s |
+| 10 | 2.0 µs | 17 µs | 8.8 µs | 99 µs | 16 / 15 µs | 5.1 / 4.7 ms | 7.5 MB | 503 B | 0.0 MB | — | 0.00 s | 16 ms | 3 ms |
+| 100 | 1.8 µs | 11 µs | 8.0 µs | 27 µs | 15 / 16 µs | 4.8 / 4.6 ms | 7.6 MB | 521 B | 0.0 MB | — | 0.00 s | 18 ms | 3 ms |
+| 1,000 | 1.7 µs | 7 µs | 7.9 µs | 13 µs | 21 / 14 µs | 4.8 / 4.7 ms | 8.1 MB | 551 B | 0.3 MB | 0.3 KB | 0.01 s | 20 ms | 4 ms |
+| 10,000 | 1.5 µs | 3.5 µs | 8.1 µs | 13 µs | 21 / 21 µs | 4.8 / 4.7 ms | 13.1 MB | 557 B | 1.4 MB | 0.1 KB | 0.11 s | 72 ms | 14 ms |
+| 100,000 | 1.4 µs | 3.5 µs | 8.2 µs | 16 µs | 23 / 21 µs | 5.0 / 4.8 ms | 64.0 MB | 564 B | 103 MB | 1.0 KB | 1.08 s | 868 ms | 166 ms |
 
 The point query is `select name from t where id = 5`; the aggregate is `select n, count(*), sum(id) from t group by n` over all 100,000 rows. Both are averages of 20 runs after one warm-up.
 
-**Verdict:** a fork costs about 2 µs at every size, and a world with one changed row costs about 450 bytes on disk and 3–4 KB of memory. A query in one of 100,000 worlds is as fast as in main.
+**Verdict:** a fork costs about 1.5–2 µs at every size, and a world with one changed row costs about 560 bytes on disk and 1 KB of memory. A query in one of 100,000 worlds is as fast as in main. Checkpoint and reopen grow about linearly: 0.87 s and 0.17 s for 100,000 worlds.
 
-**Losses and caveats:**
-- **Checkpoint and reopen grow faster than linearly.** 100,000 worlds took 8.3 s to checkpoint and 3.5 s to reopen, against 245 ms and 71 ms at 10,000 (34× and 49× for 10× the worlds). [Concepts](docs/concepts.md#worlds) says about a second each for 100,000; this run had the machine at a load of 70, so the two numbers can't be separated here, but they need a rerun on a quiet machine.
-- **Small sizes are noise.** At 10 and 100 worlds the memory added is below what the footprint can resolve, and the first query in main (160 µs) includes a cold cache.
+**Changed from the laptop:** the M2 run (load average 70–90, 6 GB of swap in use) took 8.3 s to checkpoint and 3.5 s to reopen 100,000 worlds, 34× and 49× its 10,000-world times, and was listed as a loss. On a quiet machine it's 12× for 10× the worlds: the loaded machine, not the code. Memory per world was 3.8 KB there (the macOS footprint, which counts differently from resident memory here).
+
+**Caveats:**
+- **Small sizes are noise.** At 10 and 100 worlds the memory added is below what can be resolved.
 - **One row per world.** Worlds that change more pay for what they change (section 10).
 
 ### Discarding 99,000 of 100,000 worlds
 
-`DISCARD=one|many|expire ROWS=10000 cargo run --release --example worlds`: 100,000 worlds forked from main (10,000 rows), each writing one row, then all but 1,000 discarded: one by one (`discard`), in one call (`discard_many`), or by the expiry sweep after `expire` on each. On the GCP VM (e2-highmem-4: 4 vCPUs, 32 GB, x86-64), quiet (load 0.2–1.1). Before is main just before the change; after is the change as merged (`b1d9c18`).
+`DISCARD=one|many|expire ROWS=10000 cargo run --release --example worlds` (build `8db2f701`): 100,000 worlds forked from main (10,000 rows), each writing one row, then all but 1,000 discarded: one by one (`discard`), in one call (`discard_many`), or by the expiry sweep after `expire` on each.
 
-| | before | after |
-|---|---|---|
-| one by one | 54.8 s (554 µs each, 85.5 s CPU) | **0.93 s** (9.4 µs each, 1.3 s CPU) |
-| in one call | — | **0.51 s** (5.1 µs each) |
-| expiry sweep | 37.9 s for 56,181 (675 µs each; the background sweep had taken the rest) | **1.25 s** for 99,000 (12.6 µs each) |
-| `world(id)` lookup | 8.7–21.5 ms | under 1 µs |
-| memory after, then after a checkpoint | 1,305 MB, 1,305 MB | 985 MB, 888 MB, then 47–59 MB after `malloc_trim` |
+| | now | 4-vCPU VM, before the fix | 4-vCPU VM, after |
+|---|---|---|---|
+| one by one | **0.35 s** (3.5 µs each, 0.5 s CPU) | 54.8 s (554 µs each) | 0.93 s (9.4 µs each) |
+| in one call | **0.30 s** (3.0 µs each) | — | 0.51 s |
+| expiry sweep | **0.51 s** for 99,000 (5.2 µs each) | 37.9 s for 56,181 | 1.25 s |
+| `world(id)` lookup | under 1 µs | 8.7–21.5 ms | under 1 µs |
+| memory after, then after a checkpoint and `malloc_trim` | 249–364 MB, then 54–91 MB | 1,305 MB | 985 MB, then 47–59 MB |
 
 **Why:** each discard used to scan every live world for forks under the branch map's write lock, and finding a world by ID scanned them all too. Each world now keeps its live fork count and depth, the map indexes worlds by ID, and `discard_many` drops a batch under one hold of the map and the log (deepest first, one Discard record each). `DROP WORLD ... CASCADE`, `SIMULATE`'s losers and the expiry and idle sweeps go through it. Retired worlds leave the search caches, and a checkpoint hands freed memory back to the system on glibc.
 
-**Loss: the 10,000-world simulation didn't get faster at discarding.** On the VM (`SEED=42`, same winner and scores as before), dropping each round's 9,900–9,999 losers took 709, 1,102 and 1,130 ms, against 288, 439 and 1,149 ms before the change. The cause hasn't been found. Those worlds hold many rows each, unlike the one-row worlds above, so per-world cleanup rather than the scan may dominate there. The 100,000-world runs in section 10, made before the change, spent 27–116 s per round discarding; they haven't been rerun.
+**The 10,000-world simulation's discards** (section 10), which on the 4-vCPU VM didn't get faster with this change (709–1,130 ms per round), now take 218–310 ms per round of 9,900–9,999 losers.
 
 ## 10. The ultimate test: one real state, 100,000 worlds, a learning loop, one merge
 
@@ -424,25 +555,27 @@ The point query is `select name from t where id = 5`; the aggregate is `select n
 
 **Rounds 2 and 3, the learning loop:** 100 children are forked from each winner (worlds of worlds). Child 0 keeps the winner's policy and the others move each knob at random by up to 12.5% of its range in round 2 and 8.3% in round 3. Each simulates the next DAYS days from its parent's own stock and pipeline, and the best 1% are kept again. Ancestors left with no living descendant are dropped, leaves first. **Finally** the best world's policy table is merged into main for real.
 
-Worlds run on 8 threads (`std::thread::scope`), on disk, with history retention set to 0. Phases are timed one after another, each across all the round's worlds. Same M2, shared with other sessions' builds and benchmarks; the load average is given per round.
+Worlds run on every core (32 threads here, 8 on the M2), on disk, with history retention set to 0. Phases are timed one after another, each across all the round's worlds. The load column is the machine's load average after the round: this job's own threads.
 
-**10,000 worlds:** `cargo run --release --example simulate`. 4 warehouses × 10 products = 40 SKUs, 3 rounds of 30 days, keep 100.
-
-| round | worlds | alive after | fork | compute | eval | discard | CPU (all phases) | memory after compute | disk | best score | median | load |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 10,000 | 100 | 23 ms | 100 s | 6.0 s | 0.4 s | 321 s | 360 MB | 117 MB | 37,140,360 | 36,607,070 | 24 |
-| 2 | 10,000 | 120 | 30 ms | 90 s | 6.5 s | 0.2 s | 369 s | 976 MB | 205 MB | 77,234,392 | 77,137,748 | 23 |
-| 3 | 10,000 | 121 | 22 ms | 74 s | 12.2 s | 0.3 s | 422 s | 924 MB | 94 MB | 119,896,685 | 119,401,998 | 17 |
-
-That was the second of two runs, with the machine quieter (5 minutes in all). The first, at a load of 45–131, took 135, 251 and 310 s to compute, 6.9, 64.9 and 60.2 s to evaluate, and 415–462 s of CPU per round, and found exactly the same scores.
-
-**100,000 worlds, the ultimate test:** `ULTIMATE=1 cargo run --release --example simulate`. To fit 8 GB it runs smaller worlds: 3 warehouses × 4 products = 12 SKUs, 3 rounds of 10 days, keep 1,000 (100 children each). Each world writes its policy (12 rows), its orders and 12 stock rows per round. In all, 300,000 worlds were forked, simulated and scored, in about 21 minutes.
+**10,000 worlds:** `cargo run --release --example simulate`. 4 warehouses × 10 products = 40 SKUs, 3 rounds of 30 days, keep 100. About 85 s in all (5 minutes on the M2).
 
 | round | worlds | alive after | fork | compute | eval | discard | CPU (all phases) | memory after compute | disk | best score | median | load |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 100,000 | 1,000 | 293 ms | 389 s | 32.2 s | 26.8 s | 811 s | 1,290 MB | 291 MB | 4,298,031 | 4,240,222 | 76 |
-| 2 | 100,000 | 1,175 | 214 ms | 223 s | 69.0 s | 90.7 s | 790 s | 1,861 MB | 367 MB | 8,065,892 | 8,054,717 | 26 |
-| 3 | 100,000 | 1,055 | 209 ms | 237 s | 59.9 s | 115.9 s | 874 s | 2,356 MB | 695 MB | 11,552,511 | 11,535,203 | 19 |
+| 1 | 10,000 | 100 | 65 ms | 18.3 s | 3.9 s | 0.24 s | 577 s | 408 MB | 78 MB | 37,140,360 | 36,607,070 | 10 |
+| 2 | 10,000 | 120 | 108 ms | 21.2 s | 5.5 s | 0.31 s | 566 s | 598 MB | 151 MB | 77,234,392 | 77,137,748 | 13 |
+| 3 | 10,000 | 121 | 289 ms | 25.7 s | 9.2 s | 0.22 s | 661 s | 716 MB | 125 MB | 119,896,685 | 119,401,998 | 15 |
+
+On the M2 the same rounds took 74–100 s each to compute and 321–422 s of CPU (its quieter run).
+
+**100,000 worlds, the ultimate test:** `ULTIMATE=1 cargo run --release --example simulate`. It runs smaller worlds (sized to fit the 8 GB laptop it was written on): 3 warehouses × 4 products = 12 SKUs, 3 rounds of 10 days, keep 1,000 (100 children each). Each world writes its policy (12 rows), its orders and 12 stock rows per round. In all, 300,000 worlds were forked, simulated and scored, in **4 minutes 40 seconds** (about 21 minutes on the M2), with the process at 1.29 GB at its peak.
+
+| round | worlds | alive after | fork | compute | eval | discard | CPU (all phases) | memory after compute | disk | best score | median | load |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 100,000 | 1,000 | 729 ms | 50.0 s | 14.3 s | 0.31 s | 866 s | 753 MB | 369 MB | 4,298,031 | 4,240,222 | 14 |
+| 2 | 100,000 | 1,175 | 851 ms | 70.6 s | 23.1 s | 0.51 s | 947 s | 899 MB | 342 MB | 8,065,892 | 8,054,717 | 9 |
+| 3 | 100,000 | 1,055 | 886 ms | 84.6 s | 31.6 s | 0.69 s | 1,034 s | 1,047 MB | 348 MB | 11,552,511 | 11,535,203 | 8 |
+
+On the M2: 223–389 s to compute per round, 27–116 s to discard (since fixed, section 9), 790–874 s of CPU.
 
 **What the search found**, over the whole horizon from main's real state (each fixed policy rerun in a fresh world from main):
 
@@ -453,16 +586,14 @@ That was the second of two runs, with the machine quieter (5 minutes in all). Th
 | the final policy, from day 0 | 119,493,894 (+48.0%) | 11,305,117 (+29.3%) |
 | **the winning lineage** (its policy changed each round) | **119,896,685 (+48.5%, +1.1% over round 1)** | **11,552,511 (+32.2%, +0.3% over round 1)** |
 
-**The merge:** the winner's 40 (or 12) policy rows went into main in 9–12 ms, and a check compares main's policy with the winner's row for row. Main's stock, orders and forecast are untouched. **Determinism:** the winner is chosen by score, with ties broken by name, and the policies come from the seed, so thread timing can't change it. Both runs of the 10,000-world test with `SEED=42` picked the same winner (`r3_66_26`, lineage `r1_4492 > r2_28_27 > r3_66_26`), with the same score in every round and the same policy in main afterwards.
+**The merge:** the winner's 40 (or 12) policy rows went into main in 6–7 ms (9–12 ms on the M2), and a check compares main's policy with the winner's row for row. Main's stock, orders and forecast are untouched. **Determinism:** the winner is chosen by score, with ties broken by name, and the policies come from the seed, so thread timing can't change it. Every run of the 10,000-world test with `SEED=42`, on the M2 with 8 threads and here with 32, picked the same winner (`r3_66_26`, lineage `r1_4492 > r2_28_27 > r3_66_26`), with the same score in every round and the same policy in main afterwards.
 
 **Losses and caveats:**
 - **The learning loop adds little here.** After round 1's random search over 10,000 or 100,000 policies, the loop gained 1.1% and 0.3%. At 100,000 worlds, the final round's policy run alone from day 0 did 1.8% worse than round 1's best: it was selected for days 20–30, from its parents' stock. The policies are tuned to one forecast; a fairer test would score each on several demand samples.
 - **No selective merge yet.** The winner also holds its simulated stock and orders, which must not reach main. So its policy rows are copied into a fresh world forked from main, and that world is merged. Merging only some tables of a world is being built on another branch.
 - **Two recursive queries per world per round.** `UPDATE ... FROM` a `WITH RECURSIVE` query took about 4.7 s for 40 rows (the same query as an `INSERT ... SELECT` takes about 10 ms), so the stock is appended as a snapshot per round instead of updated, and the orders and the stock each run the recursion. About 40 ms of CPU per 40-SKU world per round goes to SQL expression evaluation.
-- **Discarding was O(live worlds)** when these runs were made: each discard scanned every world for children under the map's write lock, so dropping 99,000 of 100,000 worlds took 27–116 s per round. Fixed since: 0.5–1.3 s for 99,000 (section 9, "Discarding 99,000 of 100,000 worlds").
-- **Memory wasn't given back after discards** in these runs. With about 120 worlds alive after each 10,000-world round, the footprint stayed at 0.5–1.2 GB; at 100,000 worlds it peaked at 2.36 GB. Since the fix, retired worlds leave the search caches and a checkpoint returns freed memory to the system on glibc (47–59 MB left after dropping 99,000 worlds); macOS keeps it for reuse.
+- **More CPU for the same work:** 566–1,034 s of CPU per round here, against 321–874 s on the M2. Half of these 32 threads are hyperthreads, and a core is slower than an M2 performance core; the wall time falls, the total work rises.
 - **Disk until `gc`:** with every world dropped and main checkpointed, the 10,000-world folder still held 82.6 MB, and 567 MB after the 100,000-world run. `gc` then freed 85,800 pages (76.8 MB) in 374 ms, leaving 2.3 MB (measured in the second 10,000-world run; the 100,000-world run predates the `gc` step).
-- **A loaded machine.** Other sessions kept the load average between 17 and 131, so wall times are noisy: the same 10,000-world work took 90 s or 251 s to compute in round 2. Treat the CPU column as the steadier number.
 
 ## 11. Monte Carlo Tree Search over worlds
 
@@ -474,9 +605,9 @@ That was the second of two runs, with the machine quieter (5 minutes in all). Th
 
 | games | iterations per move | MCTS won | lost | drawn | worlds created | discarded | peak alive | per iteration | total | CPU | peak memory | load |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 20 | 200 | 20 | 0 | 0 | 49,402 | 49,402 | 230 | 1.09 ms | 28.8 s | 20.7 s | 47 MB | 20 |
+| 20 | 200 | 20 | 0 | 0 | 49,402 | 49,402 | 230 | 0.84 ms | 22.6 s | 22.4 s | 20 MB | 3 |
 
-MCTS played first in half the games and second in the rest, and won all 20 in 7 to 26 moves. An iteration (select, fork and move, fork, rollout, discard, back up) takes about 1 ms, and a game creates 1,400 to 4,900 worlds.
+MCTS played first in half the games and second in the rest, and won all 20 in 7 to 26 moves. An iteration (select, fork and move, fork, rollout, discard, back up) takes 0.84 ms (1.09 ms on the M2, at a load of 20; the same 49,402 worlds, since the games are seeded), and a game creates 1,400 to 4,900 worlds.
 
 **Losses and caveats:**
 - **A random opponent is weak.** It shows the search works, not how strong it is; an MCTS-versus-MCTS or solver comparison hasn't been run.
@@ -484,7 +615,30 @@ MCTS played first in half the games and second in the rest, and won all 20 in 7 
 
 ## 12. A database bigger than its cache
 
-`CHRONOS_CACHE_MB=32 MB=500 KEEP=1 cargo run --release --example big` on the M2 (8 GB): 1.31 million rows of 256 hex characters each (which barely compress), with a unique column and a B-tree index, plus 328,000 rows with text keys. That's 811 MB of pages, 25 times the cache. The database is built once, then queried in a new process. The footprint is `top`'s MEM after each step, which is the true figure (RSS under-reports once pages swap). Each cell is two runs, "before" being `453e46f`. Cold is the first run of a query, warm the second.
+`CHRONOS_CACHE_MB=32 MB=500 KEEP=1 cargo run --release --example big`: 1.31 million rows of 256 hex characters each (which barely compress), with a unique column and a B-tree index, plus 328,000 rows with text keys. That's 842 MB of pages, 25 times the cache. The database is built once (42 s), then queried in a new process, twice. The footprint is the process's resident memory after each step. Cold is the first run of a query in a process, warm the second; each cell gives both runs.
+
+| step | cold ms | warm ms | resident memory |
+|---|---|---|---|
+| open | 142, 142 | | 40 MB |
+| 1,000 lookups by key, p50 (p99) | 0.062, 0.064 (0.17, 0.18) | 0.052, 0.053 (0.11, 0.11) | 73–74 MB |
+| 1,000 lookups by B-tree index, p50 (p99) | 0.074, 0.074 (0.15, 0.16) | 0.058, 0.059 (0.12, 0.12) | 74 MB |
+| primary-key range, 1,000 keys | 2.5, 2.4 | 1.3, 1.3 | 76 MB |
+| text-key range, 1/256 of the table | 1.7, 1.6 | 0.9, 0.9 | 76 MB |
+| `count(*), sum, max` over everything | 716, 710 | 700, 697 | 325 MB |
+| `GROUP BY`, 50 groups | 700, 690 | 710, 704 | 333–341 MB |
+| join + `GROUP BY` | 735, 736 | 724, 727 | 483–491 MB |
+| `tag = ...`, no index | 743, 741 | 744, 735 | 491–494 MB |
+| the same in a fork with 100 changed rows | 743, 738 | 742, 747 | 494–495 MB |
+| `ON CONFLICT (email) DO NOTHING` | 0.6, 0.6 | 0.1, 0.1 | 494–495 MB |
+| `ON CONFLICT (email) DO UPDATE` | 5.2, 5.0 | 0.4, 0.5 | 494–495 MB |
+
+`cache_bytes` finished at 33.5 MB against a cap of 33.55 MB. Build `0f1a19af`; `8db2f701` gave the same within noise (`25-big.out`).
+
+**Loss to look into: resident memory.** The page cache holds to its cap, but the process reached 495 MB during the scans and joins, where the M2 run's highest footprint was 188 MB. The two measures differ (macOS's footprint against Linux's resident memory, which keeps what the allocator hasn't returned), so this may not be growth; it hasn't been separated.
+
+### Earlier, on the M2 (8 GB)
+
+The same run on the M2 (8 GB): 1.31 million rows of 256 hex characters each (which barely compress), with a unique column and a B-tree index, plus 328,000 rows with text keys. That's 811 MB of pages, 25 times the cache. The database is built once, then queried in a new process. The footprint is `top`'s MEM after each step, which is the true figure (RSS under-reports once pages swap). Each cell is two runs, "before" being `453e46f`. Cold is the first run of a query, warm the second.
 
 | step | before: cold / warm ms | before: footprint | after: cold / warm ms | after: footprint |
 |---|---|---|---|---|
@@ -516,6 +670,8 @@ After the fixes, the highest footprint seen in a run (sampled every 2–3 second
 
 ### Building indexes and loading, under a 2 GB cap
 
+*Not rerun: from the 4-vCPU, 32 GB VM.*
+
 On the 4-core, 32 GB Linux VM, each step a new `chronos` process in a `systemd-run` scope with `MemoryMax=2G` and no swap, `CHRONOS_CACHE_MB=64`, `history_retention` 0. The table: `big (id bigint primary key, grp bigint, body text)`, 7 million rows of 540 bytes (3.8 GB of rows; 664 MB of pages, as the bodies are hex of neighbouring hashes and compress well), loaded in 100,000-row `INSERT ... SELECT` statements. "Anon" is the process's own memory at its highest, sampled every half second; the cgroup total adds the kernel's file cache, which it gives back under pressure. Before is main at `ddf74a0`, after is branch `fx-index-memory`.
 
 | step | before: result, time, anon | after: result, time, anon (cgroup) |
@@ -531,6 +687,8 @@ On the 4-core, 32 GB Linux VM, each step a new `chronos` process in a `systemd-r
 - **A big single statement is still unbounded.** It commits as one write, so it holds its rows about six times over at 1 million rows: the `SELECT`'s rows, the packed rows, a copy the constraint checks make, the index entries, the log record and the rows kept until the next checkpoint. The changes here remove some of those copies (6.2 GB to 3.5 GB). Loads in statements of 100,000 rows stayed at 454 MB. (Bounded since: see the next section.)
 
 ### One statement bigger than memory, under a 30 GB cap
+
+*Not rerun: from the 4-vCPU, 32 GB VM.*
 
 The same VM (4 cores, 31 GB), each statement in a new `chronos <db> < file.sql` process in a `systemd-run` scope with `MemoryMax=30G` (the whole VM less 1 GB for the system) and no swap, one run at a time. The table: `t (id int primary key, k int, body text)` with an index on `k`, filled by one `INSERT INTO t SELECT g, (g*7919) % 1000003, md5(g::text) || ... || md5((g+15)::text) FROM generate_series(1, n) g` (540-byte rows). "Anon" is the process's own memory at its highest, sampled every half second; the cgroup figure adds the kernel's file cache, which it gives back under pressure. Main is `70ebcde`; the branch is `fx-bulk-spill` (source as of `d9798eb`).
 
@@ -607,6 +765,8 @@ Main reads the whole table into memory before grouping a DISTINCT aggregate; the
 
 ## 13. Correctness: SQLite's sqllogictest over the Postgres protocol
 
+*Not rerun on the 32-core machine: the 4-vCPU VM, 2026-09-27.*
+
 SQLite's [sqllogictest](https://sqlite.org/sqllogictest) corpus (622 files; the [GitHub mirror](https://github.com/gregrahn/sqllogictest)) checks query answers: every query comes with its result, compared value by value or by an MD5 of all values. It's run here as the `postgresql` engine, so the records the corpus marks as not for Postgres are skipped. The same runner (its scripts and these results are in [`bench/slt`](bench/slt); its Rust source is in the engine repository) sends every record over the Postgres protocol to a fresh `chronos serve` per file, and to a reference **Postgres 17** (a database per worker), and prints values as SQLite's own runner does. A record that fails on both is the corpus's SQLite dialect, not the engine. Linux VM (4 vCPUs, 32 GB), 2026-09-27; Chronos with the fixes listed below, each file that a fix touched run again after it.
 
 | | files | records run | passed | failed |
@@ -638,18 +798,23 @@ bench/slt/par.sh postgres out-postgres 2 $(find sqllogictest/test -name '*.test'
 
 ```bash
 cargo run --release --example bench -- 10 100 1000                 # needs Postgres at host=/tmp
-WORKERS=25 cargo run --release --example bench -- 1000             # Chronos at Postgres's 25 workers
-N=500000 OVERSAMPLE=100 EF=300 cargo run --release --example search  # needs pgvector
+WORKERS=25 cargo run --release --example bench -- 1000             # Chronos at Postgres's 25 workers (TIMINGS=1: its own timings)
+python bench/rivals/forks.py dolt 10 100 1000                       # Dolt sql-server; also: postgres, neon (NEON_API_KEY), duckdb
+N=500000 OVERSAMPLE=100 EF=300 cargo run --release --example search  # needs pgvector; N=1000000 for 1M x 384
 N=1000000 cargo run --release --example find
 CRASH_RUNS=10000 cargo test --release --test durability crash_suite
-SIM_ITERS=3000 cargo test --release --features shuttle --test sim
+SIM_ITERS=3000 cargo test --release --features shuttle --test sim   # own CARGO_TARGET_DIR: shuttle rebuilds the chronos binary
 JEPSEN_KILLS=20 cargo test --release --test jepsen -- --nocapture
 chronos serve /tmp/sqlbench & N=10000 cargo run --release --example sql   # needs Postgres on 127.0.0.1:5432
 N=200000 cargo run --release --example report                       # PG=off runs Chronos alone
+ROWS=500000 AGENT=100000 OTHERS=50000 cargo run --release --example undo_agent
 CHRONOS_CACHE_MB=32 MB=500 cargo run --release --example big            # builds ~800 MB in a temp folder
-python bench/vector_dbs.py                                          # needs chronos serve, Postgres, Qdrant; see its header
+python bench/vector_dbs.py [system ...]                             # one system per run; see its header
+DATA=... python bench/rivals/pgvector_ef.py                         # pgvector's ef_search sweep on a loaded table
 SWEEP=1 ROWS=100000 cargo run --release --example worlds            # 10 .. 100,000 worlds
 cargo run --release --example simulate                              # 10,000 worlds x 3 rounds
 ULTIMATE=1 cargo run --release --example simulate                   # the ultimate test: 100,000 worlds x 3 rounds
 GAMES=20 ITERS=200 cargo run --release --example mcts               # MCTS over worlds vs a random player
 ```
+
+The 2026-09-28 rerun ran these as queued jobs, one at a time: each job's script and output are in [`bench/results/2026-09-28-rerun/`](bench/results/2026-09-28-rerun) (`vec.sh` starts each vector database fresh, `02-install-vdbs.sh` and `03-install-pgvectorscale.sh` pin their versions).
