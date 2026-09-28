@@ -449,6 +449,14 @@ drop world agent_7 cascade;   -- it and every world forked from it, deepest firs
 
 - **Partial merges:** rows merged with `ONLY` aren't merged again, but a later change to one by either side conflicts. A row whose unique value or reference is tied to a row left out, or whose table the world changed, is refused (SQLSTATE 22023). See [concepts](concepts.md#merging-part-of-a-world-or-into-another-world).
 - **`INTO`:** any live world but the one merged. Into its own parent, it's the ordinary merge.
+- **Merge checks:** queries a merge's result must find nothing in, run inside every merge (SQLSTATE 23514 when one finds rows, with the rows). See [merge checks](reference/worlds.md#merge-checks) and the [guide](guides/merge-checks.md).
+
+```sql
+create merge check lists_keep_leads on tables (leads, lists) with (timeout = '2s') as
+  select id from lists where id not in (select list from leads);
+show merge checks;            -- name, tables, timeout_ms, query, created
+drop merge check lists_keep_leads;
+```
 
 ## Time travel
 

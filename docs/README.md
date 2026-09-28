@@ -30,6 +30,7 @@ It speaks the Postgres protocol, so `psql`, drivers and ORMs connect as they do 
 - [Agent evaluation](guides/agent-evaluation.md): grade an agent by diffing its world against the expected state.
 - [Scenario planning](guides/scenario-planning.md): simulate a thousand futures, score them in SQL, merge one.
 - [Merge policies](guides/merge-policies.md): let agents merge on their own within rules you set; review only what breaks them.
+- [Merge checks](guides/merge-checks.md): SQL rules every merge's result must keep, so two changes that are fine alone but break a rule together are caught.
 
 ## Reference
 

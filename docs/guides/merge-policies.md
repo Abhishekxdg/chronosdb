@@ -277,6 +277,8 @@ curl -s localhost:7070/v1/alter_agent -H 'Content-Type: application/json' -d '{"
 - **Merges into other worlds:** a policy checks every merge its agent runs, into `main` or any world, but only `main` is closed to its direct writes. Other worlds it may write (its own, or any with `write`) it writes directly.
 - **One queue entry per world:** a world refused again updates its entry (new reasons, version and time).
 
+For rules about the data a merge leaves, not the change itself ("every lead list keeps a lead", "an order's total is its items' sum"), use [merge checks](merge-checks.md): an agent under a policy whose merge breaks one is queued here too.
+
 ## Next steps
 
 - [SQL reference: merge policies](../reference/worlds.md#merge-policies), and [MCP: the policy tools](../reference/mcp.md#merge_policies).

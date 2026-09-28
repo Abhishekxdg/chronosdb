@@ -102,6 +102,9 @@ Every tool that reads or writes rows takes `branch` (string, default `main`). A 
 | [`set_merge_policy`](#set_merge_policy) | create or change a policy, give it to agents | drafts the SQL for a person |
 | [`drop_merge_policy`](#drop_merge_policy) | remove a policy | drafts the SQL for a person |
 | [`reviews`](#reviews) | merges waiting for a person | yes |
+| [`merge_checks`](#merge_checks) | queries every merge's result must find nothing in | yes |
+| [`set_merge_check`](#set_merge_check) | create or replace a merge check | drafts the SQL for a person |
+| [`drop_merge_check`](#drop_merge_check) | remove a merge check | drafts the SQL for a person |
 
 ### describe
 
@@ -377,6 +380,33 @@ Removes a merge policy. Refused while an agent keeps to it, unless `release_agen
 
 Merges a policy sent to a person, oldest first: `world`, `owner`, `policy`, `reasons`, `asked`, `version`, `changed_since` (the branch was written to after its agent asked). A person approves with `merge` (or `MERGE WORLD`), or throws it away with `discard`. No parameters. Runs [`SHOW REVIEWS`](worlds.md#merge-policies).
 
+### merge_checks
+
+The [merge checks](../guides/merge-checks.md): SQL queries every merge's result must find nothing in. A merge whose result one finds rows in is refused with the rows, or for an agent keeping to a merge policy waits in `reviews`. A psql-style table (`name`, `tables`, `timeout_ms`, `query`, `created`). No parameters. Runs [`SHOW MERGE CHECKS`](worlds.md#merge-checks).
+
+### set_merge_check
+
+Creates a merge check, or replaces the one of that name (`CREATE OR REPLACE MERGE CHECK`). Needs `admin` (it isn't listed otherwise); in [safe mode](#safe-mode) nothing changes and the reply (`isError: true`) is the SQL for a person to run.
+
+| Parameter | Type | Required | Default |
+|---|---|---|---|
+| `name` | string | yes | letters, digits, `_` and `-` |
+| `query` | string | yes | one `SELECT` that changes nothing; the rows it finds are what's wrong |
+| `tables` | array of strings | no | none: every merge runs it. Names are taken as written (`"Lists"` stays capitalized; `"app.orders"` is table `orders` in schema `app`) |
+| `timeout_ms` | integer | no | 1000; a merge it doesn't finish in is refused |
+
+```json
+{"name": "lists_keep_leads", "query": "select id from lists where id not in (select list from leads)", "tables": ["leads", "lists"]}
+```
+
+### drop_merge_check
+
+Removes a merge check. Needs `admin`; in safe mode, drafts the SQL like `set_merge_check`.
+
+| Parameter | Type | Required | Default |
+|---|---|---|---|
+| `name` | string | yes | |
+
 ## Safe mode
 
 The default, without `--allow-merge` or `--agent`. The agent reads every world and forks; a person approves.
@@ -387,7 +417,7 @@ The default, without `--allow-merge` or `--agent`. The agent reads every world a
 - **World statements in `sql`** are refused on any branch: forking, merging, restoring, dropping or switching worlds, and changing system settings (`safe mode: agents can't fork, merge, restore, drop or switch worlds in SQL, ...`). Reads such as `SHOW WORLDS`, `DIFF`, `MERGE ... DRY RUN` and `AS OF` work. Use the `fork` tool to fork.
 - **Session-scoped:** "its own worlds" lasts as long as the process. A new `chronos mcp` can't change worlds an earlier one forked; use `--agent` for forks that stay the agent's.
 - **Merging:** a person runs `chronos <folder> merge <branch>` in a terminal, or `MERGE WORLD` from psql.
-- **Merge policies:** `merge_policies`, `check_merge_policy` and `reviews` work. `set_merge_policy` and `drop_merge_policy` change nothing: they reply with the SQL for a person to run, so the agent drafts rules (tried with `check_merge_policy` first) and the person applies them.
+- **Merge policies:** `merge_policies`, `check_merge_policy` and `reviews` work. `set_merge_policy` and `drop_merge_policy` change nothing: they reply with the SQL for a person to run, so the agent drafts rules (tried with `check_merge_policy` first) and the person applies them. `merge_checks` works; `set_merge_check` and `drop_merge_check` reply with the SQL the same way.
 - **Not the same as `chronos serve --safe`:** that makes HTTP and Postgres clients without an agent's token act as the agent `guest` (see [HTTP API](../http-api.md#auth-and-exposure)). It doesn't change `chronos mcp`.
 
 ### As an agent
@@ -399,11 +429,11 @@ With `--agent NAME`, each call is checked against that agent's rights and quotas
 | `merge` | `merge` or `merge_own` |
 | `restore`, `rollback` | `restore` |
 | `undo_merge` | `admin`, or `restore` and `merge`; never with a merge policy |
-| `set_merge_policy`, `drop_merge_policy` | `admin` |
+| `set_merge_policy`, `drop_merge_policy`, `set_merge_check`, `drop_merge_check` | `admin` |
 
 - **Checked per call:** `put` and `delete` as writes to `branch`; `merge` as a merge of `branch` (or into `into`); `restore`; `set_meta` and `discard` as managing that world (`cascade`: its whole tree); `sql`, `checkpoint`, `rollback` and `undo_merge` statement by statement, as the Postgres port checks them; `fork`, `simulate` and `replay` as they run; everything else as a read of `branch`.
 - **Refused calls** come back with `isError: true` and the reason.
-- **An agent with a merge policy:** its `merge` goes through when the merge keeps to the policy's rules. When it breaks one, it's refused (`merging bot-2 needs a person's review (merge policy small: it changes 5 rows (at most 2)); it's queued (SHOW REVIEWS)`) and the branch waits in `reviews` for a person. `merge_preview` shows a `blocked` row saying so first. See the [guide](../guides/merge-policies.md).
+- **An agent with a merge policy:** its `merge` goes through when the merge keeps to the policy's rules. When it breaks one, it's refused (`merging bot-2 needs a person's review (merge policy small: it changes 5 rows (at most 2)); it's queued (SHOW REVIEWS)`) and the branch waits in `reviews` for a person. `merge_preview` shows a `blocked` row saying so first. See the [guide](../guides/merge-policies.md). A [merge check](../guides/merge-checks.md) the merge breaks is one more broken rule: queued with the rows it found. An agent without a policy is refused (`merging bot-2 breaks merge check keep, which finds (id = 1); nothing was merged`).
 
 ## Example session
 

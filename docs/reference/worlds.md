@@ -568,3 +568,36 @@ ALTER AGENT bot SET (can = 'read,fork,write_own,write_main,merge_own', policy = 
 SHOW REVIEWS;
 MERGE WORLD bot_world;   -- a person approves
 ```
+
+### Merge checks
+
+A merge check is a query that must find nothing in what a merge would make: rules about the data,
+where a merge policy's rules are about the change (walkthrough: the [merge checks guide](../guides/merge-checks.md)).
+Every merge runs the checks for the tables it changes on the world it merges into, as the merge
+would leave it: inside the merge, under its locks, before anything is written. If one finds rows,
+the merge is refused (23514) with the rows as the reason, and nothing is merged. For an agent
+keeping to a merge policy, a check broken is a rule broken: the merge is refused (42501) and queued
+in `SHOW REVIEWS`. Two changes that are each fine alone but break a check together are caught,
+because it's the merged result that's checked.
+
+```
+CREATE [OR REPLACE] MERGE CHECK name [ON TABLES (t, ...)] [WITH (timeout = '2s')] AS SELECT ...
+DROP MERGE CHECK name                               -- 3D000 if there's none
+SHOW MERGE CHECKS                                   -- name, tables, timeout_ms, query, created
+```
+
+- **What it runs on:** the world merged into as the merge would leave it: with `ONLY TABLES` or `ONLY KEYS`, only those rows merged; with `INTO`, the other world. A transaction's `COMMIT` isn't a merge, and neither are direct writes: checks don't run for them.
+- **Which run:** with `ON TABLES`, only for merges that change one of those tables' rows or the table itself; without, for every merge. Table names are read as SQL reads them: `app.orders`, or `orders` found along the session's `search_path`; one that isn't a table on `main` is refused (42P01), since the check would never run.
+- **Schemas:** the query runs with the default `search_path` (`public`), whatever the session that made it had, so name tables in other schemas in full (`select id from app.orders`).
+- **What a check may be:** one `SELECT` (or `WITH ... SELECT`) that changes nothing: no `nextval`, `setval` or `pg_notify`, and no function made with `CREATE FUNCTION`, in it or in a view it reads (25006). It runs read only, as the database's own (not as the merging agent), and is run once on `main` when created, so one that can't run is refused then.
+- **What it costs:** it runs within its `timeout` (default 1 second): a merge it doesn't finish in is refused, since the merge waits for it holding its locks. It stops at the 11th row it finds (a `LIMIT` of its own applies first); a reason shows the first 10 (`, and more` past them).
+- **Dry runs:** `MERGE ... DRY RUN` runs the checks too, and its `blocked` row names the checks that would fail and the rows they find (over HTTP, `blocked`). A dry run with conflicts runs none: there's no merged result yet.
+- **No one skips a check.** A person's merge, or an admin's, is refused like anyone's. A person approves a queued world by changing it until it passes, then merging it; an exception to the rule is made by changing the check. Only `admin` creates or drops checks; any agent may `SHOW MERGE CHECKS`. A check's row is a definition, so a merge bringing one in is a schema change under a merge policy.
+- **Replaying the log** (at recovery, or rebuilding the past for time travel) doesn't run checks: those merges were checked when they happened.
+
+```sql
+CREATE MERGE CHECK lists_keep_leads ON TABLES (leads, lists) AS
+  SELECT id FROM lists WHERE id NOT IN (SELECT list FROM leads);
+MERGE WORLD cleanup;
+-- ERROR:  merging cleanup breaks merge check lists_keep_leads, which finds (id = 3); nothing was merged
+```

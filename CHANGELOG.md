@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+**Merge checks: rules every merge's result must keep**
+- `CREATE [OR REPLACE] MERGE CHECK name [ON TABLES (...)] [WITH (timeout = '2s')] AS SELECT ...`, `DROP MERGE CHECK`, `SHOW MERGE CHECKS`. A check is a query that must find nothing in what a merge would make. Every merge runs the checks for the tables it changes, on the world it merges into as the merge would leave it (partial merges and `INTO` included), inside the merge and under its locks, so two changes that are each fine but break a rule together are caught. Rows found refuse the merge (23514, HTTP 409) with the rows as the reason; an agent keeping to a merge policy is queued in `SHOW REVIEWS` instead. No one merges past a check, people included; only `admin` creates or drops one.
+- A check is one `SELECT` that changes nothing, run read only within its timeout (default 1 second; a merge it doesn't finish in is refused), stopping at the 11th row. `MERGE ... DRY RUN` names the checks that would fail and their rows in `blocked`.
+- Over MCP: `merge_checks`, `set_merge_check`, `drop_merge_check`; in safe mode the last two answer with the SQL for a person to run. See [docs/guides/merge-checks.md](docs/guides/merge-checks.md).
+
 ## 0.1.1 (2026-09-27)
 
 **Merge policies: agents merge on their own within rules, the rest wait for a person**
