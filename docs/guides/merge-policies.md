@@ -71,9 +71,9 @@ show merge policies;
 ```
 
 ```
-  name   | max_rows | max_deletes | tables | review_tables | schema | overwrite | critical | check_reads | require_scope |          created
----------+----------+-------------+--------+---------------+--------+-----------+----------+-------------+---------------+---------------------------
- careful |        3 |           0 |        | payments      | f      | f         | f        | f           | f             | 2026-09-27 16:19:35.06+00
+  name   | max_rows | max_deletes | tables | review_tables | review_columns | schema | overwrite | critical | check_reads | require_scope |          created
+---------+----------+-------------+--------+---------------+----------------+--------+-----------+----------+-------------+---------------+---------------------------
+ careful |        3 |           0 |        | payments      |                | f      | f         | f        | f           | f             | 2026-09-27 16:19:35.06+00
 ```
 
 Every rule is optional. A rule left out doesn't limit anything, except `schema` and `overwrite`, which are `false` (the safe side) until you allow them:
@@ -84,6 +84,7 @@ Every rule is optional. A rule left out doesn't limit anything, except `schema` 
 | `max_deletes` | it deletes more rows than this; `0` means any delete | no limit |
 | `tables` | it changes a table not in this list (`'orders,items'`) | any table |
 | `review_tables` | it changes any table in this list | none |
+| `review_columns` | it changes any column in this list (`'users.email,accounts.owner'`), even in one row: identity, owner and billing fields, where a quiet wrong value does more harm than a loud delete | none |
 | `schema` | `false` and it changes a table itself (`CREATE`/`ALTER`/`DROP TABLE`), a view, function, sequence, schema or type (or a registered reader, or a critical mark) | `false` |
 | `overwrite` | `false` and it overwrites rows its parent changed since the fork | `false` |
 | `critical` | `false` and it changes a column a reader marked critical reads (`MARK READER billing CRITICAL`) | `false` |

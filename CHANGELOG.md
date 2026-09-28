@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**Merge policies: `review_columns`**
+- `review_columns = 'users.email, accounts.owner'` sends any merge that changes one of those columns to a person, even for one row: an update changing it, an insert giving it a value, or a delete of a row that had one. Only the world's own changes count (not the parent's, combined in `BY COLUMNS`). Shown in `SHOW MERGE POLICIES`, and set over MCP with `set_merge_policy`.
+
 **A run's declared scope: what a world may change, held to at its merge**
 - `CREATE WORLD w WITH (may_change = 'leads.status, lists', tenant = 'org_id = 42', intent = '...', run = '...')` says, before the first write, which tables and columns the world is meant to change and which tenant's rows. A merge that changes anything else (another column, another tenant's row, a row moved out of the tenant, a view or a table's own definition) is refused (42501), or, for an agent keeping to a merge policy, queued for a person with what strayed. `MERGE ... DRY RUN` shows it.
 - The scope is shown in `SHOW WORLDS`, `SHOW REVIEWS` and a world's JSON over HTTP and MCP. Only the database's own users and admins may change it (`ALTER WORLD w SET (may_change = ...)`).

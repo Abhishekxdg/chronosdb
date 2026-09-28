@@ -622,7 +622,7 @@ CREATE MERGE POLICY name [WITH (key = value, ...)]  -- the policy's row, tag CRE
 ALTER MERGE POLICY name SET (key = value, ...)      -- the keys named change; the rest stay
 DROP MERGE POLICY name [CASCADE]                    -- refused (22023) while an agent keeps to it, unless
                                                     -- CASCADE: then its agents keep to none (a NOTICE each)
-SHOW MERGE POLICIES                                 -- name, max_rows, max_deletes, tables, review_tables,
+SHOW MERGE POLICIES                                 -- name, max_rows, max_deletes, tables, review_tables, review_columns,
                                                     -- schema, overwrite, critical, check_reads, require_scope, created
 SHOW REVIEWS                                        -- world, owner, policy, reasons, asked, version,
                                                     -- changed_since (written to, or partly merged, since the agent asked),
@@ -636,6 +636,7 @@ ALTER AGENT name SET (policy = 'name')              -- or policy = null
 | `max_deletes` | it deletes more rows than this (`0`: any delete) | `null` (no limit) |
 | `tables` | it changes a table not in this list (`'orders,items'`) | any table |
 | `review_tables` | it changes any table in this list | none |
+| `review_columns` | it changes any column in this list (`'users.email,accounts.owner'`), even in one row: an update changing it, an insert giving it a value, a delete of a row with one | none |
 | `schema` | `false` and it changes a table itself, a view, function, sequence, schema or type | `false` |
 | `overwrite` | `false` and it overwrites rows its parent changed since the fork (`MERGE ... OURS`, picked rows; rows combined `BY COLUMNS` don't count) | `false` |
 | `critical` | `false` and it changes a column a reader marked critical reads (see [DIFF ... READERS](#diff--readers)) | `false` |

@@ -361,6 +361,7 @@ Creates a merge policy, or changes the rules given of an existing one (the other
 | `max_deletes` | integer or `null` | it deletes more rows than this; `0`: any delete | `null`: no limit |
 | `tables` | array of strings | it changes a table not in the list | `[]`: any table |
 | `review_tables` | array of strings | it changes any table in the list | `[]` |
+| `review_columns` | array of strings | it changes any column in the list (`"users.email"`), even in one row | `[]` |
 | `schema` | boolean | `false` and it changes a table itself, a view, function, sequence, schema or type | `false` |
 | `overwrite` | boolean | `false` and it overwrites rows its parent changed since the fork | `false` |
 | `critical` | boolean | `false` and it changes a column a reader marked critical reads ([`MARK READER`](worlds.md#diff--readers)) | `false` |
