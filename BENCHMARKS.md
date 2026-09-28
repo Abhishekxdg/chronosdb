@@ -17,19 +17,17 @@
 | against | workload | Chronos DB | rival | section |
 |---|---|---|---|---|
 | **DuckDB 1.5.5** | analytics reports over 200,000-row tables | 2.8–25.4 ms | 0.4–8.3 ms: **2.2–7× faster** | [4](#4-sql-over-the-postgres-protocol) |
-| **pgvector 0.8.6** | vector search median, all rows, 1M real embeddings, both at defaults | 4.69 ms at 99.3% recall | **2.40 ms**, at 92.8% recall. Raised to 98.6% recall, pgvector takes 13.5 ms. | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
-| **Weaviate, Chroma, Milvus, Elasticsearch, LanceDB** | vector search median, all rows, 1M real embeddings | 4.69 ms at 99.3% recall | 2.25–3.92 ms, at 85.0–98.2% recall (Weaviate: 2.48 ms at 98.2%) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 | **Postgres 17** | merge p50, 1,000 agents on disk, one thread per agent | 714–718 ms (1,231 ms before #23 and #29) | **128 ms** (25 workers) | [1](#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
 | **its own target** | vector search inside a fork, against main, 1M rows | 1.55× main (no filter), 1.12× (text) | target: within 1.1× | [3](#3-hybrid-search-inside-branches-phase-3-targets-p99--5-ms-at-1m-fork-within-10-of-main) |
 | **its own gate** | filtered vector search at 10%, 500k × 384, against tuned pgvector | 0.93 ms | 1.17–1.22 ms: only 1.3×, under the 5× gate | [2](#2-vector-search-vs-postgres--pgvector-phase-1-kill-gate-5-pgvector) |
-| **Redis 8.10** | vector search median, all rows, 76k and 1M real embeddings | 0.72–0.74 ms, 4.69 ms | **0.46 ms, 0.50 ms**, at 75.0% and 74.2% recall (Chronos: 99.98%, 99.3%) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+| **Redis 8.10** | vector search median, all rows, 76k and 1M real embeddings | 0.72–0.74 ms, 1.36 ms | **0.46 ms, 0.50 ms**, at 75.0% and 74.2% recall (Chronos: 99.98%, 98.6%) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 | **LanceDB 0.39** | loading 76k × 1,536 vectors | 4.7 s | **1.0 s** (in its own process, from an Arrow table) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 | **Weaviate, Redis** | one-user (1%) vector search p99, 76k | 2.1–2.3 ms | **1.46 ms, 1.23 ms** | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 | **Postgres 17** | one order joined to its row by key, over the protocol | 52 µs | **50 µs** | [4](#4-sql-over-the-postgres-protocol) |
 | **Redis, Weaviate** | server memory after the 76k run | 1.14 GB (2.3 GB at its peak) | 1.05 GB, 1.10 GB | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
-| **Milvus, Qdrant, OpenSearch** | server memory at 1M real embeddings | 7.7 GB after the run, 14.4 GB at its peak | 5.2 GB, 6.6 GB, 8.9 GB after (6 GB of raw vectors) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+| **Milvus, Qdrant, OpenSearch** | server memory at 1M real embeddings | 7.7 GB after the run, 9.0 GB at its peak (14.4 GB before) | 5.2 GB, 6.6 GB, 8.9 GB after (6 GB of raw vectors) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 
-The merge row's cause is found and its fix is being built (section 1, TODOS.md). No longer losses: the 8.6 ms vector p99 of this rerun's first runs was a readiness bug, fixed in the same change (section 6); the protocol join + `GROUP BY` is 4.4 ms against Postgres's 6.9 ms since #22 (section 4); and the slow checkpoint and reopen at 100,000 worlds came from the loaded laptop (section 9).
+The merge row's cause is found and its fix is being built (section 1, TODOS.md). No longer losses: unfiltered vector search at 1M, 4.69 ms before and 1.36 ms since (section 6, "Where the 1M search's time went"), now faster than every system that finds more than 75% of the true top 10; the 8.6 ms vector p99 of this rerun's first runs was a readiness bug, fixed in the same change (section 6); the protocol join + `GROUP BY` is 4.4 ms against Postgres's 6.9 ms since #22 (section 4); and the slow checkpoint and reopen at 100,000 worlds came from the loaded laptop (section 9).
 
 ## 1. Forks and concurrent writes (Phase 1 kill gate: 10× Postgres)
 
@@ -325,7 +323,7 @@ Chronos ranges are two runs of the PR build; the others ran once each, and pgvec
 
 | system | load | index | all rows: p50 | p99 | recall@10 | one user: p50 | p99 | recall@10 | memory after |
 |---|---|---|---|---|---|---|---|---|---|
-| **Chronos DB** (SQL) | 64.0 s | 147 s | 4.69 ms | 6.74 ms | **99.3%** | **3.68 ms** | **5.24 ms** | **100%** | 7.7 GB (14.4 GB peak) |
+| **Chronos DB** (SQL) | 64.2 s | 135 s | 1.36 ms | **1.71 ms** | 98.6% | **1.16 ms** | **1.33 ms** | **100%** | 7.7 GB (9.0 GB peak) |
 | Redis 8.10 | 208 s | — | **0.50 ms** | **2.23 ms** | 74.2% | 11.1 ms | 11.9 ms | 100% | 13.2 GB |
 | Chroma 1.5.9 (embedded) | 586 s | — | 2.25 ms | 2.74 ms | 96.8% | 265 ms | 290 ms | 99.7% | — |
 | pgvector 0.8.6 | 88.6 s | 427 s | 2.40 ms | 4.03 ms | 92.8% | 30.9 ms | 59.1 ms | 94.6% | — |
@@ -333,11 +331,11 @@ Chronos ranges are two runs of the PR build; the others ran once each, and pgvec
 | LanceDB 0.39 (embedded) | **12.0 s** | 148 s | 3.43 ms | 3.95 ms | 85.0% | 28.0 ms | 29.4 ms | 96.7% | — |
 | Elasticsearch 9.5.4 | 1,612 s | 129 s | 3.56 ms | 8.03 ms | 94.9% | 3.47 ms | 16.9 ms | 61.3% | 33.0 GB |
 | Milvus 3.0.1 | 125 s | 35.8 s | 3.92 ms | 6.17 ms | 97.3% | 3.89 ms | 5.72 ms | 99.7% | 5.2 GB |
-| Qdrant 1.19.1 | 1,372 s | 6.2 s | 6.67 ms | 10.57 ms | 99.0% | 5.83 ms | 7.36 ms | 99.98% | 6.6 GB |
+| Qdrant 1.19.1 | 1,372 s | 6.2 s | 6.67 ms | 10.57 ms | **99.0%** | 5.83 ms | 7.36 ms | 99.98% | 6.6 GB |
 | pgvectorscale 0.9.1 | 90.3 s | 2,342 s | 8.33 ms | 13.44 ms | 96.6% | 51.4 ms | 103.6 ms | 69.8% | — |
 | OpenSearch 3.8.0 | 1,431 s | 363 s | 10.06 ms | 12.28 ms | 98.5% | 4.83 ms | 20.8 ms | 80.6% | 8.9 GB |
 
-**Verdict at 1M: the best recall, and the fastest filtered search that keeps it; not the fastest unfiltered search.** Seven systems answer an all-rows search faster at their defaults, all with lower recall. Weaviate is the closest: 1.9× faster at 1.1 points less recall. Filtered to one user, Chronos is the fastest of the systems that keep 99.7% recall or more (Milvus 3.89 ms, Qdrant 5.83 ms, Weaviate 8.47 ms).
+**Verdict at 1M: the fastest search of every system that finds more than 75% of the true top 10, and the fastest filtered to one user.** Only Redis answers an all-rows search faster, at 74.2% recall; Qdrant alone finds more (99.0% against 98.6%), at 6.67 ms. Filtered to one user, Chronos is the fastest of all (1.16 ms; Elasticsearch 3.47 ms at 61.3% recall, Milvus 3.89 ms at 99.7%). Chronos's row is the 2026-09-28 build of "Where the 1M search's time went" below; before it, 4.69 ms at 99.3% recall, with seven systems faster.
 
 **pgvector at matched recall.** Defaults trade recall for speed differently, so pgvector's search beam was raised on the same 1M table (`bench/rivals/pgvector_ef.py`, HNSW index rebuilt as above; the sweep was stopped after 400):
 
@@ -349,9 +347,36 @@ Chronos ranges are two runs of the PR build; the others ran once each, and pgvec
 | 200 | 7.75 ms | 13.28 ms | 97.9% | 91.9 ms | 100% |
 | 300 | 10.60 ms | 18.91 ms | 98.3% | 91.8 ms | 100% |
 | 400 | 13.54 ms | 24.08 ms | 98.6% | 92.0 ms | 100% |
-| *Chronos DB, defaults* | *4.69 ms* | *6.74 ms* | *99.3%* | *3.68 ms* | *100%* |
+| *Chronos DB, defaults* | *1.36 ms* | *1.71 ms* | *98.6%* | *1.16 ms* | *100%* |
 
-pgvector never reached Chronos's recall; at 98.6% it's 2.9× slower than Chronos, and at 95.9% already about as slow. A sweep of the other systems' settings hasn't been run.
+At Chronos's recall (98.6%, `ef_search = 400`) pgvector is 10× slower: 13.5 ms against 1.36 ms. A sweep of the other systems' settings hasn't been run.
+
+### Where the 1M search's time went (2026-09-28)
+
+The 1M run above was 4.69 ms at first. Profiled on the same machine (raw output and scripts: [`bench/results/2026-09-28-vec1m-profile`](bench/results/2026-09-28-vec1m-profile)), the search index itself took 2.33 ms of it (`examples/walk.rs`: the graph walked on 1-bit codes with a beam of 1,024, then 1,024 candidates rescored), and the server spent most of the rest fetching the 10 rows found: each lives in a leaf page of about 32 rows, and at 6 KB a row (1,536 numbers) a leaf is about 200 KB, read, decompressed and checked with blake3 whole to return one row (23% of the server's time was blake3 alone).
+
+| change | engine alone: p50 / recall@10 | over SQL: p50 / p99 / recall@10 | server peak |
+|---|---|---|---|
+| before | 2.40 ms / 99.4% | 4.69 ms / 6.74 ms / 99.3% | 14.4 GB |
+| the graph's default beam at most 400 (1,024 on this data: none reached the self-test's 99.5%) | 1.03 ms / 98.6% | 3.39 ms / 5.30 ms / 98.6% | |
+| the index build holds each vector once (copied into one buffer as rows are read) | | | 10.3 GB |
+| the walk fetches a node's new neighbours before measuring any | **0.84 ms / 98.6%** | | |
+| leaves of rows of 1 KB or more end at about 16 KB, not every ~32 rows; rows unpacked into the index a part at a time | | **1.36 ms / 1.71 ms / 98.6%** | **9.0 GB** |
+
+**The speedup by cause, at matched recall.** The beam cap trades recall for speed, so each change was also run alone over SQL, back to back on the same machine (`40-`, `41-`, `42-vec1m-*.out`):
+
+| build | beam | all rows: p50 / p99 | recall@10 | one user: p50 | peak |
+|---|---|---|---|---|---|
+| main (v0.1.2) | its default (1,024 here) | 4.75 / 6.75 ms | 99.3% | 3.59 ms | 14.4 GB |
+| main | 400 (`SET hnsw.ef_search`) | 3.57 / 5.56 ms | 98.5% | 3.61 ms | 14.5 GB |
+| this change | 1,000 (`SET hnsw.ef_search`) | **2.30 / 3.07 ms** | **99.3%** | 1.14 ms | 9.0 GB |
+| this change | its default (400) | **1.36 / 1.71 ms** | 98.6% | 1.16 ms | 9.0 GB |
+
+At the old recall (99.3%) the leaves, the prefetch and the memory changes make it 2.1× faster (4.75 to 2.30 ms), which is already faster than Weaviate (2.48 ms at 98.2%); only Chroma (2.25 ms at 96.8%) and Redis (0.50 ms at 74.2%) are faster, with less recall. At the new recall they make it 2.6× faster than main with the same beam (3.57 to 1.36 ms), and 9.9× faster than pgvector raised to the same recall (13.5 ms at 98.6%; pgvector's sweep never reached 99.3%). The one-user search is a scan, which the beam doesn't touch: its 3.1× is the leaves alone.
+
+The engine-alone column is two rounds of `examples/walk.rs`, main against the branch back to back (`20-walk-prefetch.out`). With the fetches gone, the server's time is the search itself: the graph walk about half, rescoring the candidates 16%, the SQL layer's own distances for the 10 rows 6%, fetching them about 2% (`30-vec1m-sql.out`). One user's search, a scan of 1% of the rows, went from 3.68 ms to 1.16 ms from the smaller leaves alone.
+
+**Smaller leaves for wide rows** change where leaves end, so pages are laid out differently from here on. Rows under 1 KB end their leaves exactly where they did, so narrow tables keep their pages. A database written before reads, diffs, merges and verifies the same (`tests/layout.rs`, on a database written by v0.1.2), and edits on its trees reuse their untouched subtrees, since every place a leaf ended before is still an end. The first edit to an old wide leaf rewrites it as several smaller ones: about the bytes the rule before wrote for it, and edits after that cost what they do on a tree built now (`prolly::tests`). No format version changes: reading doesn't depend on where leaves end.
 
 ### The p99 this rerun found, and fixed
 
@@ -382,8 +407,9 @@ The first edition's table: one run, the five systems one after another on a load
 **Why not the graph on this data:** the graph walked on 1-bit codes answers in about 0.35 ms at a beam of 400, but finds only 92.8% of the true top 10: DBpedia holds many near-duplicate entities, and a graph navigates poorly among them. The 1-bit scan with full-precision rescoring finds 99.98% in about 0.6 ms (`examples/walk.rs`). Chronos DB measures its graph when it's built and uses it only if it scores at least 98% against the scan; on synthetic clustered vectors (section 2) it scores 99.5% and is used.
 
 **Losses and caveats:**
-- **Unfiltered search at 1M:** seven systems are faster at their defaults (above). Where Chronos's 4.7 ms goes at this size hasn't been profiled yet.
-- **Memory:** at 1M the Chronos server peaked at 14.4 GB and held 7.7 GB after, against 6 GB of raw vectors; at 76k, 2.3 GB at its peak. Not yet investigated.
+- **Unfiltered search at 1M** trades 0.7 points of recall for its speed: the graph's default beam is at most 400 now (it was 1,024 on this data). `SET hnsw.ef_search = 1000` gives back about 99.4% of the true top 10 (a beam of 1,024 found 99.4%, `examples/walk.rs`).
+- **Memory:** at 1M the Chronos server holds 7.7 GB after the run, against 6 GB of raw vectors (every vector is kept at full precision in memory for rescoring), and peaks at 9.0 GB while it builds the index; at 76k, 2.3 GB at its peak.
+- **The 76k runs weren't rerun** after the 1M changes; they may be faster now (smaller leaves for wide rows), not slower.
 - **Loading:** LanceDB takes an Arrow table in its own process (1.0 s at 76k, 12 s at 1M); Chronos gets rows over the Postgres protocol, in binary (4.7 s, 64 s).
 - **In-process vs over the network:** LanceDB and Chroma answer in the benchmark's own process; the others over TCP (Chronos, Postgres) or HTTP and gRPC.
 - **Elasticsearch** gives itself up to half the machine's memory by default (32–33 GB here), and **Qdrant**'s loads include JSON over HTTP, per its default client: 23 minutes at 1M.

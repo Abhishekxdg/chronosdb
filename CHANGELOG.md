@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Vector search at 1M rows: 2.1× faster at the same recall, 3.5× at the new default beam, a third less memory to build**
+- On 1M real OpenAI embeddings (1,536 dimensions) over SQL, at the same 99.3% recall@10 (`SET hnsw.ef_search = 1000`): 2.30 ms p50, from 4.75 ms. At the new default: 1.36 ms p50 and 1.71 ms p99 at 98.6% recall@10, from 4.75 ms and 6.75 ms at 99.3%; one user's search (1%) 1.16 ms, from 3.59 ms. The server peaks at 9.0 GB building the index, from 14.4 GB ([BENCHMARKS §6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings)).
+- The HNSW graph's default beam is at most 400: it tunes itself to the narrowest beam that finds 99.5% of the true top 10, and on real embeddings none did, so it used 1,024. `SET hnsw.ef_search` still widens it (1,000: 99.3% at 1M, 2.30 ms).
+- The graph walk loads a node's new neighbours before measuring any of them: 19% faster at the same beam.
+- Building the search index holds each vector once: copied into one buffer per column as rows are read, rows unpacked a part at a time.
+- Leaves of wide rows are smaller: a row of 1 KB or more can also end its leaf, so leaves hold about 16 KB instead of about 32 rows (200 KB for 6 KB vectors), and fetching a row by key reads that much. Narrower rows keep their leaves as they were. Databases written before read, diff and merge the same, and need no migration.
+- A one-time cost in databases written before: the first edit to one of their wide leaves rewrites it whole (as before) but as several smaller leaves. On 20,000 rows of about 3 KB, 50 such edits wrote 323 pages where the old rule wrote 62, and 23% more bytes (94.6 KB against 77.1 KB); the same keys edited again wrote 49.7 KB, less than a tree built now (92.3 KB). A 1M-row table of 6 KB rows turns over once, leaf by leaf as it's edited: about its own size in writes, as before, in about twelve times the pages (about 2.5 rows a leaf instead of 32), after which an edit rewrites a 16 KB leaf instead of a 200 KB one. A diff between a fork made before and main after reads the rewritten leaves on main's side (323 pages, 94.6 KB here) and the old ones on the fork's (63 pages, 77.5 KB), where the old rule read 62 and 62 pages.
+
 **Merge policies: `max_age`**
 - `max_age = '1h'`: an agent's world forked longer ago than that doesn't merge on its own; it waits in `SHOW REVIEWS` with its age as the reason (`was forked 2 h 5 min ago (at most 1 h)`). It complements `check_reads`, which catches reads that changed, not ones that are merely old.
 
