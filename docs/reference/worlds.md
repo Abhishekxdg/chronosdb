@@ -347,6 +347,32 @@ alter world payout set (check_reads = false);    -- a person's way past it
 - **Restarts:** what a world read is kept in memory. After the database restarts, a world that checks its reads can't show its earlier reads were current, so its merge is held (`relies on reads made before the database restarted`): redo the work in a new world, or turn the check off.
 - **Anyone reading it counts:** a person inspecting the world with `SELECT` adds to what it read.
 
+### Declared scope (may_change, tenant)
+
+An agent allowed to write a table can still overwrite the wrong rows of it. A world can say, when it's forked and before its first write, what it's meant to change. Its merge is then held to that:
+
+```sql
+create world close_stale with (
+  may_change = 'leads.status, lists',  -- whole tables, or single columns
+  tenant     = 'org_id = 42',          -- every row changed has org_id = 42, before and after
+  intent     = 'close leads idle 90 days',
+  run        = 'planner/3'             -- your own id for the run (a subagent's, a job's)
+);
+-- ... writes in close_stale ...
+merge world close_stale;
+-- ERROR:  merging close_stale changes leads.owner: leads/7; it changes leads rows outside tenant org_id = 42: leads/9,
+--         outside the scope it was forked with (may change leads.status, lists; tenant org_id = 42); nothing was merged: ...
+```
+
+- **`may_change`:** a table named whole may be inserted into, deleted from, updated and altered. A column (`leads.status`) may only be updated. Names are read as SQL reads them (`"Leads"."Status"`), and each must be a table or column of the world it's forked from (42P01 otherwise). Leave it out to allow every table.
+- **`tenant`:** `'column = value'`, where the value is a number, `true`/`false`, or text in single quotes (`'region = ''eu'''`); or `{"org_id": 42}` in `META`. A row counts when the column holds the value before the change (updates, deletes) and after it (inserts, updates), so moving a row out of the tenant is outside too. A table without the column is outside; one named in `may_change` without it is refused at the fork.
+- **Everything else is outside:** views, functions, sequences, schemas, and a table's own changes when only its columns are listed or a tenant is set. `intent` and `run` are only shown.
+- **Checked on what the world changed:** its own rows, as the merge applies them (after `ONLY TABLES` / `ONLY KEYS`). Columns the parent changed and a `BY COLUMNS` merge combines in don't count against it.
+- **Refused or queued:** SQLSTATE `42501`; for an agent keeping to a merge policy, a broken rule (`..., outside its declared scope`), and the world waits in `SHOW REVIEWS`. `MERGE ... DRY RUN` shows it in its `blocked` row.
+- **Changing it:** `ALTER WORLD w SET (may_change = 'leads')` widens it, `= null` drops a part. Only the database's own users and admins may; the agent that forked the world can't (42501).
+- **Shown:** `SHOW WORLDS` and `SHOW REVIEWS` have a `scope` column (JSON: `may_change` as `[{"table": ..., "column": ...}]`, `tenant` as `{"column": ..., "value": ...}`, `intent`, `run`); the world's owner is the agent that forked it. Over HTTP and MCP a world has a `scope` field.
+- **Required:** a merge policy with `require_scope = true` refuses its agents' forks that declare neither `may_change` nor `tenant`.
+
 ## UNDO MERGE
 
 ```
@@ -597,9 +623,10 @@ ALTER MERGE POLICY name SET (key = value, ...)      -- the keys named change; th
 DROP MERGE POLICY name [CASCADE]                    -- refused (22023) while an agent keeps to it, unless
                                                     -- CASCADE: then its agents keep to none (a NOTICE each)
 SHOW MERGE POLICIES                                 -- name, max_rows, max_deletes, tables, review_tables,
-                                                    -- schema, overwrite, critical, check_reads, created
+                                                    -- schema, overwrite, critical, check_reads, require_scope, created
 SHOW REVIEWS                                        -- world, owner, policy, reasons, asked, version,
-                                                    -- changed_since (written to, or partly merged, since the agent asked)
+                                                    -- changed_since (written to, or partly merged, since the agent asked),
+                                                    -- scope (what the world was forked to change)
 ALTER AGENT name SET (policy = 'name')              -- or policy = null
 ```
 
@@ -613,6 +640,7 @@ ALTER AGENT name SET (policy = 'name')              -- or policy = null
 | `overwrite` | `false` and it overwrites rows its parent changed since the fork (`MERGE ... OURS`, picked rows; rows combined `BY COLUMNS` don't count) | `false` |
 | `critical` | `false` and it changes a column a reader marked critical reads (see [DIFF ... READERS](#diff--readers)) | `false` |
 | `check_reads` | `true`: its agents' worlds check their reads, and a merge that read rows changed since the fork waits (see [stale reads](#stale-reads-check_reads)) | `false` |
+| `require_scope` | `true`: its agents must declare `may_change` or `tenant` when forking (the fork is refused otherwise); a merge outside a world's declared scope waits whatever this says (see [declared scope](#declared-scope-may_change-tenant)) | `false` |
 
 An agent keeping to a policy changes `main` only by merging: a direct write there, `RESTORE`,
 `UNDO MERGE` or `UNDO AGENT` is refused (42501), since it would skip the rules. Rules count the

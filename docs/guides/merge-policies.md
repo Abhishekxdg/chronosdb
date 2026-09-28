@@ -71,9 +71,9 @@ show merge policies;
 ```
 
 ```
-  name   | max_rows | max_deletes | tables | review_tables | schema | overwrite | critical | check_reads |          created
----------+----------+-------------+--------+---------------+--------+-----------+----------+-------------+---------------------------
- careful |        3 |           0 |        | payments      | f      | f         | f        | f           | 2026-09-27 16:19:35.06+00
+  name   | max_rows | max_deletes | tables | review_tables | schema | overwrite | critical | check_reads | require_scope |          created
+---------+----------+-------------+--------+---------------+--------+-----------+----------+-------------+---------------+---------------------------
+ careful |        3 |           0 |        | payments      | f      | f         | f        | f           | f             | 2026-09-27 16:19:35.06+00
 ```
 
 Every rule is optional. A rule left out doesn't limit anything, except `schema` and `overwrite`, which are `false` (the safe side) until you allow them:
@@ -88,6 +88,7 @@ Every rule is optional. A rule left out doesn't limit anything, except `schema` 
 | `overwrite` | `false` and it overwrites rows its parent changed since the fork | `false` |
 | `critical` | `false` and it changes a column a reader marked critical reads (`MARK READER billing CRITICAL`) | `false` |
 | `check_reads` | `true` and it read rows that changed in its parent since the fork (its agent decided on state that's gone) | `false` |
+| `require_scope` | never itself: `true` makes its agents declare what each world may change when forking it (`may_change`, `tenant`); a merge outside that [declared scope](../reference/worlds.md#declared-scope-may_change-tenant) waits for a person | `false` |
 
 Rows are counted as the merge would apply them: one per row it inserts, updates or deletes in the parent, after `ONLY TABLES` / `ONLY KEYS`. A row settled `USING THEIRS` (the parent's value kept) changes nothing, so it doesn't count. Table names are read as SQL reads them: `orders` is folded to lowercase, and `"Orders"`, quoted, is another table (`tables = 'orders,"Orders"'`). The database's own bookkeeping (indexes, constraint rows, `serial` counters) doesn't count. Rows combined `BY COLUMNS` never count as overwrites: they keep the parent's changed columns.
 

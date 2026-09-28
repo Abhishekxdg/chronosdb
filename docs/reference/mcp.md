@@ -186,6 +186,8 @@ Creates a branch: an instant private copy. In safe mode it becomes one of the se
 | `from` | string | no | `main`; a branch, or `name@when` |
 | `meta` | object | no | none; notes, e.g. `{"owner": "you", "task": "..."}` |
 
+To say what the branch is meant to change, held to at its merge, put a [declared scope](worlds.md#declared-scope-may_change-tenant) in `meta`: `{"may_change": "leads.status, lists", "tenant": "org_id = 42", "intent": "close stale leads", "run": "your run or subagent id"}`.
+
 Returns `created branch task-1 (world id <id>) from main; pass branch="task-1" to work on it`.
 
 ### set_meta
@@ -363,6 +365,7 @@ Creates a merge policy, or changes the rules given of an existing one (the other
 | `overwrite` | boolean | `false` and it overwrites rows its parent changed since the fork | `false` |
 | `critical` | boolean | `false` and it changes a column a reader marked critical reads ([`MARK READER`](worlds.md#diff--readers)) | `false` |
 | `check_reads` | boolean | `true`: its agents' worlds keep what they read, and a merge that read rows changed since the fork waits ([stale reads](worlds.md#stale-reads-check_reads)) | `false` |
+| `require_scope` | boolean | `true`: its agents' forks must declare `may_change` or `tenant` in `meta` ([declared scope](worlds.md#declared-scope-may_change-tenant)) | `false` |
 
 An unknown rule, or a value of the wrong type, is refused with the rules' names. Returns the policy as a table.
 

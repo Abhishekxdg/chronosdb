@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+**A run's declared scope: what a world may change, held to at its merge**
+- `CREATE WORLD w WITH (may_change = 'leads.status, lists', tenant = 'org_id = 42', intent = '...', run = '...')` says, before the first write, which tables and columns the world is meant to change and which tenant's rows. A merge that changes anything else (another column, another tenant's row, a row moved out of the tenant, a view or a table's own definition) is refused (42501), or, for an agent keeping to a merge policy, queued for a person with what strayed. `MERGE ... DRY RUN` shows it.
+- The scope is shown in `SHOW WORLDS`, `SHOW REVIEWS` and a world's JSON over HTTP and MCP. Only the database's own users and admins may change it (`ALTER WORLD w SET (may_change = ...)`).
+- Merge policies have `require_scope`: its agents' forks must declare `may_change` or `tenant`.
+
 ## 0.1.2 (2026-09-28)
 
 **Move from Postgres in one command: `chronos import <folder> postgres://...`**
