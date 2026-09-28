@@ -9,7 +9,7 @@ It speaks **Postgres**, searches **filters, text and vectors** in one query, and
 
 <br>
 
-![status](https://img.shields.io/badge/status-v0.1.1%20preview-f59e0b?style=flat-square)
+![status](https://img.shields.io/badge/status-v0.1.2%20preview-f59e0b?style=flat-square)
 ![rust](https://img.shields.io/badge/rust-1.90%2B-b7410e?style=flat-square&logo=rust&logoColor=white)
 ![postgres wire](https://img.shields.io/badge/postgres-wire%20protocol-336791?style=flat-square&logo=postgresql&logoColor=white)
 ![mcp](https://img.shields.io/badge/MCP-ready-7c3aed?style=flat-square)
@@ -462,7 +462,7 @@ The Jepsen-style test found two real bugs before this release (money created by 
 
 ## Status and roadmap
 
-Chronos DB is a **working engine**, released as [v0.1.1](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.1) on 2026-09-27, and not yet used in production.
+Chronos DB is a **working engine**, released as [v0.1.2](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.2) on 2026-09-28, and not yet used in production.
 
 - [x] Worlds: fork, diff, three-way merge, partial merges, time travel, undo
 - [x] Postgres wire protocol and a broad SQL surface, checked against Postgres 17
@@ -477,6 +477,7 @@ Chronos DB is a **working engine**, released as [v0.1.1](https://github.com/Abhi
 - [x] Fixes from four full code reviews: parser and regex recursion limits, caps on user-controlled sizes, lock poisoning after a panic, Origin and Host checks on the loopback HTTP API, hardened spill files
 - [x] First tagged release, [v0.1.0](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.0): signed binaries for macOS and Linux
 - [x] [v0.1.1](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.1): merge policies, the sqllogictest correctness run and its fixes, and the fourth review's fixes
+- [x] [v0.1.2](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.2): `chronos import postgres://`, merge checks, the stale-read check, what a change affects, merging by columns per table, and faster joins and agent writes on many cores
 - [x] A plain scan's memory stays flat as tables grow: a `count(*)` or `sum` needs +6 to +8 MB at 1M to 10M rows (it was +63 MB at 10M, and RSS 250 MB is now 107 MB). What still grows is the page directory an open database keeps, about 3 MB per million narrow rows
 - [x] Bulk vector ingest: `COPY FROM STDIN (FORMAT binary)` with pgvector's binary vectors, COPY streaming into its INSERT, vectors stored 7 bits to a character. Loading 76k embeddings is now bound by the disk, not the protocol (it decodes them all in 0.7 s); LanceDB's 2 s load doesn't wait for the disk (no fsync)
 - [x] Write less per vector load: integer keys are stored in number order (tables made from now on), so a load in id order goes straight into the tree. A binary COPY of 76k embeddings writes 526 MB (it was 1.82 GB) in 8–15 s

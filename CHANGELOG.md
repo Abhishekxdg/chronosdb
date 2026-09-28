@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 (2026-09-28)
 
 **Move from Postgres in one command: `chronos import <folder> postgres://...`**
 - Reads a live Postgres's catalog and brings over schemas, enum types, sequences (continued past the rows), tables with their columns, defaults, keys, `UNIQUE` and `CHECK`, every row (COPY, text format, a table at a time), then foreign keys, indexes, views and materialized views. Extensions, functions, triggers, row-level security, roles, and anything Chronos refuses are listed in a report instead of stopping the import. `--dry-run` tries every definition on an empty in-memory database and writes nothing.
@@ -29,6 +29,20 @@
 - `CREATE [OR REPLACE] MERGE CHECK name [ON TABLES (...)] [WITH (timeout = '2s')] AS SELECT ...`, `DROP MERGE CHECK`, `SHOW MERGE CHECKS`. A check is a query that must find nothing in what a merge would make. Every merge runs the checks for the tables it changes, on the world it merges into as the merge would leave it (partial merges and `INTO` included), inside the merge and under its locks, so two changes that are each fine but break a rule together are caught. Rows found refuse the merge (23514, HTTP 409) with the rows as the reason; an agent keeping to a merge policy is queued in `SHOW REVIEWS` instead. No one merges past a check, people included; only `admin` creates or drops one.
 - A check is one `SELECT` that changes nothing, run read only within its timeout (default 1 second; a merge it doesn't finish in is refused), stopping at the 11th row. `MERGE ... DRY RUN` names the checks that would fail and their rows in `blocked`.
 - Over MCP: `merge_checks`, `set_merge_check`, `drop_merge_check`; in safe mode the last two answer with the SQL for a person to run. See [docs/guides/merge-checks.md](docs/guides/merge-checks.md).
+
+**Column defaults**
+- **A default Postgres works out afresh for each row is refused (0A000) instead of being evaluated once.** `DEFAULT random()`, `DEFAULT (nextval('q') + 100)` or `DEFAULT now() + interval '7 days'` gave every row the same value; now `CREATE TABLE`, `ADD COLUMN` and `SET DEFAULT` refuse them, naming the column and the expression. Sequences, `serial` and identity columns, `gen_random_uuid()`, `now()` (and `CURRENT_TIMESTAMP`, `transaction_timestamp()`, `statement_timestamp()`, `clock_timestamp()`) and `current_date` are worked out per row, as before, and constant expressions still work. A subquery in a default is 0A000, as in Postgres.
+- `DEFAULT` reads arithmetic and `||` (`DEFAULT 60 * 60`, `DEFAULT 'a' || 'b'`); `DEFAULT nextval('s') + 1` was a syntax error.
+- **`nextval('s'::regclass)` defaults use the sequence.** pg_dump and Postgres's catalog write serial and identity columns that way, and it was taken as a constant, so every insert got the same id. `ALTER TABLE ... SET DEFAULT nextval('s'[::regclass])` on an integer column numbers it from the sequence, as the `CREATE TABLE` form does.
+- `chronos import postgres://` brings a column with a refused default over without the default, and reports it (Supabase's `timezone('utc'::text, now())` is one), instead of skipping the table.
+
+**Speed on many cores** (a 32-core server, c2d-standard-32; [BENCHMARKS.md](BENCHMARKS.md) was rerun on it against 13 rivals)
+- **Joins and grouping over the protocol:** the 20,000-row join + `GROUP BY` went from 11.5 ms to 4.4 ms (Postgres 17: 6.9 ms). Linux builds use mimalloc on glibc too (11.5 to 8.1 ms: glibc gave each query's big batches back to the kernel, and the next query faulted them in again); helper threads wait between queries instead of starting afresh for each step (8.5 to 7.4 ms; in process, a 200k `count(*)` 5.0 to 2.8 ms); tables of 8,192 rows or more split into up to 16 parts, so a 20,000-row table uses more than 4 cores (7.2 to 4.4 ms).
+- **Agents writing on disk:** 1,000 agents, each forking main, writing 1,000 rows one by one and merging, on one thread each: 5.0 s to 1.76–1.80 s. A world other than main logs its writes in batches (one lock taken per batch, not per row), and a thread finds its world without the branch map's lock. Merges on disk at 1,000 threads are still slow: p50 714–718 ms against Postgres's 128 ms at 25 workers.
+- **Vector search p99:** a vector graph counts as built only once its self-test has run. Before, the first searches ran beside 128 exact probe scans on every core: p99 8.6 ms, now 2.1–2.7 ms.
+
+**Durability**
+- `main` and merges are synced as before. New: a crash can lose an open world's writes even after a later `main` commit was synced (they're logged in batches). After a crash each open world comes back as some prefix of its own writes, and it's flagged. See [versions and crashes](docs/concepts.md#versions-and-crashes) and [operations](docs/operations.md).
 
 ## 0.1.1 (2026-09-27)
 
