@@ -155,6 +155,7 @@ Rows aren't rewritten when a table changes. Each packed row records the column l
 - **Renaming a table** moves its rows.
 - **Limit:** rows stored as JSON (through the JSON commands) are matched by name, so a renamed column doesn't find their old field.
 
+- **Merging by columns:** `alter table leads set (merge_by_columns = true)` makes merges into this table combine a row both sides changed when they changed different columns, as `MERGE ... BY COLUMNS` does; `alter table leads reset (merge_by_columns)` goes back to whole rows (the default). Set it on tables whose columns don't depend on each other: two agents changing `status` and `balance` of one account would otherwise combine into a row neither checked. It's a change to the table: `DIFF` shows it (`merge: by columns`), and under a merge policy it's a schema change.
 - **A primary key later:** `alter table t add primary key (col)`, or `(a, b)` (or a new column declared `primary key` on an empty table). Every row moves to its key in one step: the key must be unique and never null (23505, 23502), and its columns become `NOT NULL`.
 
 ## Keys of several columns

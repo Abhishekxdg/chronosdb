@@ -278,7 +278,7 @@ MERGE BRANCH [name] [clause ...]
 | `ONLY KEYS ('t/1', ...)` | merge just those rows; `name` stays open with the rest |
 | `[USING] OURS` | a row both sides changed: keep this world's |
 | `[USING] THEIRS` | a row both sides changed: keep the parent's |
-| `BY COLUMNS` | a row both sides changed merges column by column; only a column both changed conflicts |
+| `BY COLUMNS` | a row both sides changed merges column by column; only a column both changed conflicts. A table set `ALTER TABLE t SET (merge_by_columns = true)` merges this way in every merge into a world that has the setting |
 | `RESOLVE ('t/1' = OURS \| THEIRS \| DELETE \| '<row as JSON>', ...)` | settle rows one by one |
 | `CONFIRM` | after a crash: merge the world as it is now (check `DIFF` first) |
 | `DRY RUN` | change nothing; see [below](#merge-dry-run) |

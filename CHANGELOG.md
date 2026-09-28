@@ -9,6 +9,10 @@
 **Stale-read check: merges that relied on rows that changed since the fork**
 - A world forked `WITH (check_reads = true)` keeps what it reads (keys, a scan's range, index lookups, and whole tables for searches, bounded per table), and its merge is refused (40001) when any of it changed in the world it merges into since the fork, though it never wrote it. For an agent under a merge policy it's a reason like any rule, and the world is queued in `SHOW REVIEWS`; a policy with `check_reads = true` turns it on for all its agents' worlds, and they can't turn it off. Reads in a transaction count for its world. After a restart earlier reads are unknown, so such a merge is held.
 
+**Merging by columns, per table**
+- `ALTER TABLE t SET (merge_by_columns = true)` makes every merge into a world with the setting combine a row both sides changed when they changed different columns, as `MERGE ... BY COLUMNS` does; `RESET (merge_by_columns)` goes back to whole rows, still the default. The same column changed on both sides always conflicts. The setting is a change to the table: in `DIFF` (`merge: by columns`), in `DIFF ... AS SQL`, and a schema change under merge policies.
+- A conflict whose rows all had different columns changed says so, and names `BY COLUMNS` and the table setting.
+
 **Merge policies**
 - `ALTER MERGE POLICY` and `CREATE MERGE POLICY` read, change and write in one step: two changes at once both land, a policy dropped meanwhile isn't written back, and two creates of one name can't both succeed.
 - `DROP MERGE POLICY name CASCADE` takes the policy from its agents and drops it in one step; MCP's `drop_merge_policy` with `release_agents` uses it, so agents are never released without the drop.

@@ -101,7 +101,7 @@ A merge that finds conflicts changes nothing and says, for each row, what each s
 
 - **Look first:** a dry run (`MERGE WORLD x DRY RUN`, `dry_run: true`, `preview()`) shows every row the merge would touch and what would happen to it, changing nothing.
 - **Row by row:** settle each conflicting row as ours, theirs, a row you give, or deleted (`RESOLVE (...)`, `picks`).
-- **By columns:** where the two sides changed different columns of a row, combine them (`BY COLUMNS`, `columns: true`). Off by default: two changes to the same column always conflict.
+- **By columns:** where the two sides changed different columns of a row, combine them (`BY COLUMNS`, `columns: true`). Off by default, per table: `ALTER TABLE leads SET (merge_by_columns = true)` makes every merge into that table combine such rows (turn it on where the columns don't depend on each other; `RESET (merge_by_columns)` turns it off). Two changes to the same column always conflict. A conflict whose sides changed different columns says so, and names the setting.
 - **All at once:** `USING OURS` / `THEIRS` for whatever's left.
 - **Tables themselves:** if both sides changed one table's columns or constraints differently, no side can be picked (each side's rows follow its own columns). Merge one side, then redo the other's change. The same change on both sides merges.
 
