@@ -329,6 +329,24 @@ What the merge would do with the same clauses, row by row. Changes nothing.
 
 A last row with outcome `blocked` (and null `table`) means constraints would refuse the merge; `detail` says why.
 
+### Stale reads (check_reads)
+
+A merge conflicts on rows both sides *wrote*. A world that checks its reads is also held when rows it only *read* changed in the world it merges into since it forked: an agent that read a balance, decided on it and wrote a payout would otherwise merge a decision made on a balance that's gone.
+
+```sql
+create world payout with (check_reads = true);   -- only when forking: what it read before isn't known later
+-- ... reads and writes in payout ...
+merge world payout;
+-- ERROR:  merging payout read rows that changed since it forked: accounts/1; nothing was merged: redo the work in a new world forked from now
+alter world payout set (check_reads = false);    -- a person's way past it
+```
+
+- **What counts as read:** every row read through the world (a key looked up, and a scan's range, up to where it stopped when it stopped early), the entries of indexes and constraints it looked in (so a row the parent added that a lookup would have found counts too), and whole tables for full-text and vector searches. Past 10,000 keys or 1,000 ranges of one table, reads of it count as the whole table. Reads in a transaction count for its world. Rows the world wrote itself aren't checked here: they conflict or settle as always.
+- **Refused or queued:** SQLSTATE `40001` (HTTP 409); for an agent keeping to a merge policy, a reason like any broken rule, and the world waits in `SHOW REVIEWS`. `MERGE ... DRY RUN` shows it in its `blocked` row.
+- **For every world of an agent:** a merge policy with `check_reads = true` turns it on for every world its agents fork, and they can't turn it off (42501); a person can.
+- **Restarts:** what a world read is kept in memory. After the database restarts, a world that checks its reads can't show its earlier reads were current, so its merge is held (`relies on reads made before the database restarted`): redo the work in a new world, or turn the check off.
+- **Anyone reading it counts:** a person inspecting the world with `SELECT` adds to what it read.
+
 ## UNDO MERGE
 
 ```
@@ -579,7 +597,7 @@ ALTER MERGE POLICY name SET (key = value, ...)      -- the keys named change; th
 DROP MERGE POLICY name [CASCADE]                    -- refused (22023) while an agent keeps to it, unless
                                                     -- CASCADE: then its agents keep to none (a NOTICE each)
 SHOW MERGE POLICIES                                 -- name, max_rows, max_deletes, tables, review_tables,
-                                                    -- schema, overwrite, critical, created
+                                                    -- schema, overwrite, critical, check_reads, created
 SHOW REVIEWS                                        -- world, owner, policy, reasons, asked, version,
                                                     -- changed_since (written to, or partly merged, since the agent asked)
 ALTER AGENT name SET (policy = 'name')              -- or policy = null
@@ -594,6 +612,7 @@ ALTER AGENT name SET (policy = 'name')              -- or policy = null
 | `schema` | `false` and it changes a table itself, a view, function, sequence, schema or type | `false` |
 | `overwrite` | `false` and it overwrites rows its parent changed since the fork (`MERGE ... OURS`, picked rows; rows combined `BY COLUMNS` don't count) | `false` |
 | `critical` | `false` and it changes a column a reader marked critical reads (see [DIFF ... READERS](#diff--readers)) | `false` |
+| `check_reads` | `true`: its agents' worlds check their reads, and a merge that read rows changed since the fork waits (see [stale reads](#stale-reads-check_reads)) | `false` |
 
 An agent keeping to a policy changes `main` only by merging: a direct write there, `RESTORE`,
 `UNDO MERGE` or `UNDO AGENT` is refused (42501), since it would skip the rules. Rules count the

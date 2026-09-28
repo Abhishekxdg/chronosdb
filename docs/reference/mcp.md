@@ -362,6 +362,7 @@ Creates a merge policy, or changes the rules given of an existing one (the other
 | `schema` | boolean | `false` and it changes a table itself, a view, function, sequence, schema or type | `false` |
 | `overwrite` | boolean | `false` and it overwrites rows its parent changed since the fork | `false` |
 | `critical` | boolean | `false` and it changes a column a reader marked critical reads ([`MARK READER`](worlds.md#diff--readers)) | `false` |
+| `check_reads` | boolean | `true`: its agents' worlds keep what they read, and a merge that read rows changed since the fork waits ([stale reads](worlds.md#stale-reads-check_reads)) | `false` |
 
 An unknown rule, or a value of the wrong type, is refused with the rules' names. Returns the policy as a table.
 

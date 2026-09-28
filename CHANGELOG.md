@@ -6,6 +6,9 @@
 - Reads a live Postgres's catalog and brings over schemas, enum types, sequences (continued past the rows), tables with their columns, defaults, keys, `UNIQUE` and `CHECK`, every row (COPY, text format, a table at a time), then foreign keys, indexes, views and materialized views. Extensions, functions, triggers, row-level security, roles, and anything Chronos refuses are listed in a report instead of stopping the import. `--dry-run` tries every definition on an empty in-memory database and writes nothing.
 - A small Postgres client of its own (TLS as libpq's `sslmode`, SCRAM-SHA-256), so the binary gains no dependency.
 
+**Stale-read check: merges that relied on rows that changed since the fork**
+- A world forked `WITH (check_reads = true)` keeps what it reads (keys, a scan's range, index lookups, and whole tables for searches, bounded per table), and its merge is refused (40001) when any of it changed in the world it merges into since the fork, though it never wrote it. For an agent under a merge policy it's a reason like any rule, and the world is queued in `SHOW REVIEWS`; a policy with `check_reads = true` turns it on for all its agents' worlds, and they can't turn it off. Reads in a transaction count for its world. After a restart earlier reads are unknown, so such a merge is held.
+
 **Merge policies**
 - `ALTER MERGE POLICY` and `CREATE MERGE POLICY` read, change and write in one step: two changes at once both land, a policy dropped meanwhile isn't written back, and two creates of one name can't both succeed.
 - `DROP MERGE POLICY name CASCADE` takes the policy from its agents and drops it in one step; MCP's `drop_merge_policy` with `release_agents` uses it, so agents are never released without the drop.
