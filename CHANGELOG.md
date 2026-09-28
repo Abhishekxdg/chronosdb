@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**Effects that happen only on merge: `NOTIFY ON MERGE` and the outbox**
+- `NOTIFY ON MERGE channel, 'payload'` in a world queues a notification that nobody hears while the world is worked on, that's dropped if the world is discarded or the transaction rolled back, and that's sent to `main`'s listeners when a merge (or a transaction's `COMMIT`) brings it into `main`.
+- Landed effects wait in `main`'s outbox until a worker acknowledges them: `SHOW OUTBOX`, `ACK OUTBOX 'id', ...`. The database sends nothing out itself, so a worker that was down misses nothing. Merge policies don't count effects as changes.
+
 **Merge policies: `review_columns`**
 - `review_columns = 'users.email, accounts.owner'` sends any merge that changes one of those columns to a person, even for one row: an update changing it, an insert giving it a value, or a delete of a row that had one. Only the world's own changes count (not the parent's, combined in `BY COLUMNS`). Shown in `SHOW MERGE POLICIES`, and set over MCP with `set_merge_policy`.
 

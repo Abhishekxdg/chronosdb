@@ -323,8 +323,32 @@ unlisten jobs;                             -- or: unlisten *
 
 - **When:** at `COMMIT` (or at once outside a transaction); a `ROLLBACK`, a failed statement or a `ROLLBACK TO SAVEPOINT` drops the notifications it made. The same channel and payload twice in one transaction arrive once. Payloads are shorter than 8000 bytes (22023).
 - **Who hears it:** connections that LISTEN on the channel in the same world, the sender included; each gets Postgres's NotificationResponse with the sender's backend id. An idle connection gets it at once, without sending a query (psql shows it at its next command); a connection inside a transaction gets it when the transaction ends.
-- **Worlds:** a world's notifications reach its own listeners only: a NOTIFY in a fork doesn't reach main, and a merge sends nothing (notifications are messages at commit time, not rows). A LISTEN is for the world the connection is in when it runs, and stays with that world if the connection switches.
+- **Worlds:** a world's notifications reach its own listeners only: a NOTIFY in a fork doesn't reach main, and a merge doesn't send it (notifications are messages at commit time, not rows). For a notification that should happen when the work reaches main, use `NOTIFY ON MERGE` (below). A LISTEN is for the world the connection is in when it runs, and stays with that world if the connection switches.
 - **Differences from Postgres:** a LISTEN inside a transaction takes effect at once, not at COMMIT.
+
+### Effects on merge: NOTIFY ON MERGE and the outbox
+
+An agent working in a world shouldn't send the refund email before anyone has approved the refund. `NOTIFY ON MERGE` queues a notification in the world instead. Nobody hears it while the world is worked on, it's dropped with the world if the world is discarded, and it happens when a merge brings it into `main`:
+
+```sql
+-- in world fix (an agent's)
+update orders set status = 'refunded' where id = 42;
+notify on merge billing, '{"refund": 42}';
+
+-- a person merges fix: listeners on main hear  billing  '{"refund": 42}'  now,
+-- and it waits in main's outbox until a worker says it's done
+show outbox;
+--            id                  | channel |    payload     | world |          queued           | by
+-- -------------------------------+---------+----------------+-------+---------------------------+-----
+--  1790590000000-9f2c41d07e6a13b5 | billing | {"refund": 42} | fix   | 2026-09-28 10:00:00.00+00 | bot
+ack outbox '1790590000000-9f2c41d07e6a13b5';   -- ACK 1
+```
+
+- **An entry, not a message:** it's a row of the world, so a `ROLLBACK` drops it, a transaction's `COMMIT` keeps it, and a merge into another world carries it along. Only reaching `main` sends it: a merge, a transaction's `COMMIT` on `main`, or `NOTIFY ON MERGE` run on `main` itself (heard as the statement or its transaction ends). A merge sends it with backend id 0.
+- **Kept until acknowledged:** after the NOTIFY, the entry waits in `main`'s outbox, so work a worker missed (it wasn't listening, or crashed) is still there. A worker listens, or polls `SHOW OUTBOX`, does the work, then runs `ACK OUTBOX 'id', ...`, which removes them (`ACK n`; ids not there are skipped, so acknowledging twice is fine). The database never sends anything out itself: no webhooks, no mail, no secrets.
+- **Who:** `NOTIFY ON MERGE` is a write to the session's world (an agent needs to be allowed to write it; one keeping to a merge policy can't queue on `main` directly). An effect isn't a row or schema change of the parent, so merge policies don't count it. `SHOW OUTBOX` lists the entries in the session's world (in a world, its own and `main`'s as they were at the fork). `ACK OUTBOX` needs the database's own user, or an agent with `write_main` or `admin`; a merge policy doesn't stop it.
+- **Partial merges:** `ONLY TABLES` and `ONLY KEYS` leave a world's effects in it until it merges whole. `DIFF` doesn't list effects; `MERGE ... DRY RUN` shows them as rows of `_sonos_outbox`.
+- **Limits:** channels and payloads as for `NOTIFY` (a channel under 64 bytes, a payload under 8000). An effect is delivered once per landing: `UNDO MERGE` doesn't take back a notification already heard.
 
 ## TRUNCATE
 
