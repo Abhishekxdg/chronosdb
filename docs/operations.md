@@ -33,7 +33,7 @@ Pages nothing uses any more (overwritten data, merged or discarded branches) are
 ## Crashes
 
 - **Always safe:** `main` writes and merges into `main` are fsynced before they return (with the default `synchronous_commit = full`; see [concepts](concepts.md#durability-in-one-table)).
-- **Can be lost:** writes to other branches can be lost in a crash, but never silently.
+- **Can be lost:** writes to other branches can be lost in a crash, but never silently. Each world logs its writes in batches (at its next fork, merge or discard, another agent's write to it, a checkpoint, a read of history, or shutdown), so a crash can lose them even after a later `main` commit was synced.
   - After a crash, open branches are flagged.
   - Merging one needs the version its last write returned, or an explicit confirm after checking `diff`.
   - See [concepts](concepts.md#versions-and-crashes).

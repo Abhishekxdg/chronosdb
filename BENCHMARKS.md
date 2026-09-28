@@ -29,6 +29,16 @@ With durability on (`chronos-disk` in the same harness: write-ahead log, fsync o
 - **100 agents:** 666k–787k rows/s.
 - **1,000 agents:** 365k–646k rows/s.
 
+**On disk at 1,000 agents, rerun on 32 cores** (GCP c2d-standard-32, 2026-09-28; two rounds, before and after alternating; before is `main` at `368410af`, after writes each world's rows to the log in batches, see section 8):
+
+| threads | before | after | in memory (no log) |
+|---|---|---|---|
+| one per agent (1,000) | 4.96–5.06 s | **1.84–1.98 s** | 0.79 s |
+| 64 | 2.20–2.25 s | **1.39–1.41 s** | 0.68 s |
+| 25 | 1.94–1.97 s | **1.43–1.46 s** | 0.72 s |
+
+At 100 agents: 0.22 s before, 0.10–0.11 s after. Merge p50 at one thread per agent went from 1,231–1,263 ms to 576–622 ms.
+
 **Verdict:** even on disk, Chronos is about 190–340× Postgres at 1,000 agents. The gate passes.
 
 **How the baselines were set up:**
@@ -44,6 +54,7 @@ Neither returns an agent's changes as rows or its conflicts as data; Dolt (above
 **Losses and caveats:**
 - **Merge queueing:** Chronos's median merge at 1,000 agents is slower than Postgres's (736 ms vs 348 ms), because merges into `main` queue behind each other. A single merge takes about 4 ms. **Unfair setup:** the Chronos run had one thread per agent (1,000 merges queued at once), while Postgres was capped at 25 workers. At the same 25 workers (`WORKERS=25`), the Chronos median is 39–46 ms. See section 8.
 - **Forks under heavy load:** fork p99 at 1,000 agents reaches about 190 ms, from scheduling 1,000 OS threads on 8 cores.
+- **Merge p50 at 25 workers rose on disk** with batched writes (4.9–6.2 ms to 26.6–27.4 ms): agents now reach their merges sooner and queue on `main` together, and a merge logs its world's rows. The run as a whole is 26% faster.
 
 ## 2. Vector search vs Postgres + pgvector (Phase 1 kill gate: 5× pgvector)
 
@@ -265,6 +276,28 @@ Chronos DB is queried through SQL over the Postgres protocol, exactly as Mem0's 
 **Where the time goes:** the undo rebuilds history from the checkpoint before the moment named, then replays the log up to now. Its cost grows with how much was written since that checkpoint, not with the size of the database. Undoing something from weeks ago with a busy log in between will take longer; indexing changes by agent would fix that.
 
 ## 8. The losses, rerun on Linux
+
+### On-disk writes at 1,000 agents (2026-09-28)
+
+**Machine:** GCP c2d-standard-32 (32 vCPUs, 128 GB, pd-ssd), glibc release builds, the machine's one-job queue. `examples/bench.rs`, `ONLY=chronos-disk`, 1,000 agents each forking `main`, putting 1,000 rows one at a time and merging.
+
+**The loss:** 5.0 s with one thread per agent, against 0.79 s in memory; 1.95 s at 25 workers against 0.72 s.
+
+**Cause:** every put to a world appended its own record to the log: a million appends through one lock. `perf` (context switches by call chain): 70% waited for the log's lock, 26% for the branch map's. Letting a waiting thread spin before sleeping gained 8% at 1,000 threads and lost 7–12% at 25 and 64, so it was backed out.
+
+**Fix:** a world other than `main` keeps its writes (up to 64 KB) and logs them as one record, before anything that depends on them: a fork from it, a merge of or into it, a discard, another agent's write to it, a checkpoint, a read of history or the past, a backup, shutdown. The record keeps each write's time and rows, so replay rebuilds versions write by write and `AS OF` stays exact to the millisecond. A crash can now lose a world's writes even after a later `main` commit was synced; worlds become durable when they reach `main`, as before, and open worlds are flagged.
+
+| setup | before | after |
+|---|---|---|
+| one thread per agent: wall | 4.96–5.06 s | **1.84–1.98 s** |
+| one thread per agent: merge p50 | 1,231–1,263 ms | 576–622 ms |
+| 64 workers: wall | 2.20–2.25 s | **1.39–1.41 s** |
+| 25 workers: wall | 1.94–1.97 s | **1.43–1.46 s** |
+| 100 agents: wall | 0.22 s | 0.10–0.11 s |
+
+**What's left:** after the fix, 2% of context switches wait for the log and 67% for the branch map's lock (`Core::branch`): forks and merges take it for writing, and append to the log while they hold it, so each one parks the thousand writers looking up their world. fsyncs are 9%. Logging a merge's batch before it takes its locks made the 1,000-thread run slower (2.35 s), so it isn't in.
+
+### The losses of sections 1, 4 and 6
 
 **Machine:** GCP e2-highmem-4 (4 vCPUs, 32 GB, x86-64, Ubuntu 24.04, balanced persistent disk), glibc builds, no swap in use. **Before** is `main` at `0b4f867`; **after** is the `losses` branch at `b5ae045`. Each harness ran against both builds back to back, under the machine's shared benchmark lock, starting with a load average under 1. **Others:** Postgres 17.11 and pgvector 0.8.6 at their defaults (on Linux, `fdatasync` on commit, which flushes like Chronos), and LanceDB 0.39 embedded.
 

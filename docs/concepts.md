@@ -62,6 +62,7 @@ An **agent** is who does something: it has a name, an ID and a secret token, and
 Every world can be read as it was at any moment in the **retention window**: 30 days by default, set with `alter system set history_retention = '7 days'` (or `set_retention` in Rust; `0` keeps none). A moment is written `name@when` wherever a world is read: SQL (`AS OF`, `use world`), the database name in psql, `branch` in the HTTP API and MCP, the clients' `at()`. See [SQL](sql.md#time-travel).
 
 - **How:** checkpoints are kept, with the log after them, for the window. A moment is rebuilt from the last checkpoint before it plus the log up to it (the log records the time as it goes), once, then cached. Rebuilding costs a replay of up to one checkpoint's worth of log (up to 64 MB): milliseconds to about a second.
+- **To the millisecond, open worlds too:** a world's writes reach the log in batches (see [versions and crashes](#versions-and-crashes)), but each write keeps the time it was made, and reading the past logs every waiting batch first. `AS OF` a moment between two writes of a world not yet merged shows the first and not the second, as for any world.
 - **What history costs:** the log for the window, and pages only older checkpoints still use.
 - **Restore** writes a world's past rows back as an ordinary write, so it's durable, merges like any change, and history keeps what it replaced. **Forking the past** gives a world holding it: its diff is everything since, and merging it restores.
 - **Number counters don't go back:** `serial` and sequence counters are the database's, not a world's, so neither reading the past nor restoring it rewinds them: numbers are never handed out twice. A world read `AS OF` a moment can't take numbers (it's read-only).
@@ -121,7 +122,7 @@ Rows settled by picks or by columns are logged as the rows they became, so a res
 
 Every write to a branch returns the branch's **version**, the number of writes since the fork. Pass the last version you saw to the merge (`merge_at`, `"version"` over HTTP; the TypeScript and Python clients do this for you). If the branch isn't at that version, the merge is refused.
 
-Why this matters: writes to `main` and merges are forced to disk before they return. Writes to other branches are not, for speed. So a crash can lose a branch's latest writes. That's the trade, and it's safe only because it's never silent:
+Why this matters: writes to `main` and merges are forced to disk before they return. Writes to other branches are not, for speed: each world keeps its writes and logs them together (up to 64 KB at a time) when something needs them there: a fork from it, a merge of it or into it, a discard, a write by another agent, a checkpoint, a read of history or the past, or a clean shutdown. So a crash can lose a branch's writes since then, even when later writes to `main` were synced; each world comes back as it was after some of its own writes, in order. That's the trade, and it's safe only because it's never silent:
 
 - **Merge with a version:** if a crash rolled the branch back, the merge fails with "N of your writes were lost; redo them or discard".
 - **Merge without a version:** after a crash, every branch that was open is **flagged**, and a plain merge is refused. Check its `diff`, then merge with its current version (`merge <b> confirm` in the shell, `"confirm": true` over HTTP or MCP), or discard it.
@@ -136,7 +137,7 @@ The flag survives restarts and checkpoints until the branch is merged or discard
 | write to `main` | yes (fsynced; concurrent callers share one fsync) |
 | merge into `main` | yes |
 | merge into another world | no, until that world reaches `main` |
-| write to another branch | no, until merged; a crash can lose it, and the merge will say so |
+| write to another branch | no, until merged; a crash can lose it (a later `main` commit doesn't save it), and the merge will say so |
 | fork, discard | no, until the next fsync; a lost fork is simply gone |
 | `batch` | all rows or none |
 
