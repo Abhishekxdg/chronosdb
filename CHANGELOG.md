@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**Merge policies: `max_age`**
+- `max_age = '1h'`: an agent's world forked longer ago than that doesn't merge on its own; it waits in `SHOW REVIEWS` with its age as the reason (`was forked 2 h 5 min ago (at most 1 h)`). It complements `check_reads`, which catches reads that changed, not ones that are merely old.
+
 **Docs: start every agent with `max_deletes = 0`**
 - The merge-policies guide opens with it (no delete merges without a person; loosen later with a bound, `max_deletes` and `deletes_per_hour`), its recipes keep it, and the security guide, concepts, README and MCP's policy-drafting instructions point to it.
 
