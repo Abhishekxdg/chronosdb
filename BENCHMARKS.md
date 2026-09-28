@@ -109,12 +109,14 @@ Postgres got one documented tuning pass:
 
 **Joins and grouping.** Run over the same 20,000 rows, plus a 20,000-row `sql_orders` table pointing at them. These are reads, so the durability setting doesn't matter.
 
-| query | Chronos (JSON rows) | Chronos, one core | Chronos now | Postgres |
-|---|---|---|---|---|
-| one order joined to its row by primary key | 62 µs | 62 µs | 62 µs | 56 µs |
-| `count(*)` of orders joined to rows `WHERE age = $1` | 8.4 ms | 1.1 ms (with join ordering) | 1.1 ms | 2.6 ms |
-| `GROUP BY age` with `count(*)`, `max(name)` | 10.0 ms | 5.5 ms | 2.2 ms | 8.1 ms |
-| join of both tables, then `GROUP BY` with `sum` | 24.5 ms | 11.7 ms | 3.9 ms | 6.9 ms |
+| query | M2: Chronos (JSON rows) | M2: Chronos, one core | M2: Chronos | M2: Postgres 16 | 32 cores: Chronos `8db2f701` | 32 cores: Chronos `cf1c9f3a` | 32 cores: Postgres 17 |
+|---|---|---|---|---|---|---|---|
+| one order joined to its row by primary key | 62 µs | 62 µs | 62 µs | 56 µs | 50 µs | 52 µs | 50 µs |
+| `count(*)` of orders joined to rows `WHERE age = $1` | 8.4 ms | 1.1 ms (with join ordering) | 1.1 ms | 2.6 ms | 1.2 ms | 1.0 ms | 2.3 ms |
+| `GROUP BY age` with `count(*)`, `max(name)` | 10.0 ms | 5.5 ms | 2.2 ms | 8.1 ms | 2.6 ms | 2.0 ms | 3.1 ms |
+| join of both tables, then `GROUP BY` with `sum` | 24.5 ms | 11.7 ms | 3.9 ms | 6.9 ms | 11.5 ms | 4.4 ms | 6.9 ms |
+
+The M2 columns are the laptop runs this section began with. The 32-core columns are the chronos-bench VM (GCP c2d-standard-32, Linux, glibc builds, 2026-09-28), medians of two or three interleaved rounds of `N=10000 examples/sql.rs`. `8db2f701` is before the changes below, and `cf1c9f3a` has mimalloc (#17), helper threads kept between queries (#21) and small tables in more parts (#22).
 
 **Packed rows.** SQL tables now store rows packed (see [SQL](docs/sql.md#storage)) instead of as JSON, which cut the cost of reading a column by more than half. `GROUP BY` now beats Postgres.
 
@@ -126,19 +128,68 @@ Postgres got one documented tuning pass:
 
 **Bigger reports.** `cargo run --release --example report`: 200,000 rows in each table, Chronos in process against the same tables in Postgres 16 over local TCP (Postgres with its default of 2 parallel workers per query). Milliseconds per query, M2 with 8 cores (4 fast, 4 efficiency):
 
-| query | Chronos, one core | Chronos, 8 cores | Postgres |
-|---|---|---|---|
-| `count(*)` of orders | 15.9 | 4.8 | 6.8 |
-| `count(*)` of orders `WHERE amount > 500` | 30.0 | 6.6 | 8.4 |
-| `GROUP BY age` with `count(*)`, `max(name)` | 55.5 | 15.1 | 45.6 |
-| join of both tables, then `GROUP BY` with `sum` | 123.9 | 29.4 | 47.8 |
-| `count(*)` of the join `WHERE name LIKE 'user 1%'` (111,111 users) | 107.1 | 22.5 | 29.4 |
+| query | M2: Chronos, one core | M2: Chronos, 8 cores | M2: Postgres 16 | 32 cores: Chronos `8db2f701`, one core | 32 cores: Chronos `8db2f701` | 32 cores: Chronos `cf1c9f3a` | 32 cores: Postgres 17 |
+|---|---|---|---|---|---|---|---|
+| `count(*)` of orders | 15.9 | 4.8 | 6.8 | 20.6 | 5.0 | 2.8 | 6.4 |
+| `count(*)` of orders `WHERE amount > 500` | 30.0 | 6.6 | 8.4 | 33.7 | 5.5 | 4.0 | 8.7 |
+| `GROUP BY age` with `count(*)`, `max(name)` | 55.5 | 15.1 | 45.6 | 73.0 | 12.0 | 9.8 | 19.6 |
+| join of both tables, then `GROUP BY` with `sum` | 123.9 | 29.4 | 47.8 | 175.2 | 33.1 | 25.3 | 68.6 |
+| `count(*)` of the join `WHERE name LIKE 'user 1%'` (111,111 users) | 107.1 | 22.5 | 29.4 | 129.6 | 25.3 | 18.6 | 45.2 |
+
+The 32-core columns are the chronos-bench VM (GCP c2d-standard-32, Linux, 2026-09-28). The `8db2f701` and Postgres 17 columns come from the benchmark rerun (two rounds, `bench/results/2026-09-28-rerun/04-report.out` on the `bench-rerun` branch). The `cf1c9f3a` column is medians of three rounds. `cf1c9f3a` keeps helper threads between queries (#21) and splits small tables into more parts (#22), which changes nothing at 200,000 rows. The example runs Chronos in process with the system allocator, so #17's mimalloc isn't in these numbers. A core of this VM is slower than an M2 performance core: one core took 175.2 ms for the join against the M2's 123.9. DuckDB 1.5.5, embedded, 32 threads, ran the same five queries in the same rerun: 0.4, 0.7, 4.4, 7.5 and 7.7 ms. That's 2–7× faster than Chronos.
 
 Before this round, on one core, those were 26, 37, 63, 214 and 217 ms. Walking the table without copying each key, a hash index with no list per value, and `LIKE` without allocating account for the one-core gains; the cores do the rest. The join's hash table is also built on every core (rows split by hash into partitions, each indexed on its own), and a scan drops columns only its own filter reads (here `name`, once `LIKE` has passed it).
 
 **Joining while reading.** A two-table join no longer reads its first table whole before joining: each core reads a part of it, joins that part through the other table's hash index, and, for `GROUP BY` with exact aggregates, groups it right there. Neither the first table nor the joined rows are ever held in full. Join + `GROUP BY` went from 33.9 ms to 29.4 ms and the filtered join from 26.3 ms to 22.5 ms. Queries whose first table filters down to 1,000 rows or fewer still look their matches up by key (the 1.1 ms filtered join over the protocol is unchanged).
 
 **Where the time goes now:** about a third of these joins is reading and indexing the other table (200,000 users), which joining while reading doesn't change.
+
+**On 32 cores, Linux: glibc's malloc.** On the chronos-bench VM (GCP c2d-standard-32, glibc build of `8db2f701`, Postgres 17), the protocol join + `GROUP BY` took 11.5 ms against Postgres's 6.9 ms, and capping the server's threads (`CHRONOS_THREADS=4` to `32`) didn't change it. Three suspects were ruled out:
+- **Not the protocol or prepared plans:** simple, extended and prepared protocol all took 11.4–11.9 ms (pgbench), and planning, sending and everything outside the join took under 0.1 ms.
+- **Not rows waiting for a checkpoint:** 10.8 ms after an offline checkpoint, and 10.7 ms in process (`examples/report.rs`, `N=20000`, checkpointed).
+- **Not the join strategy:** it was the planned hash join, grouping each part as it's joined.
+
+`perf` showed page faults taking 18% of the query's CPU and `madvise` another 4%. glibc hands each query's big batches back to the kernel when they're freed, and the next query faults them in again. The same binary with `GLIBC_TUNABLES` keeping that memory (`mmap_threshold=32M`, no trim) took 8.3 ms. Linux builds now use mimalloc on glibc too (the musl builds already did). Medians of two interleaved rounds of `examples/sql.rs`, `N=10000`:
+
+| | glibc malloc | mimalloc |
+|---|---|---|
+| join + `GROUP BY` | 11.5 ms | 8.1 ms |
+| `GROUP BY age` | 2.6 ms | 2.2 ms |
+| filtered join | 1.2 ms | 1.0 ms |
+| batch rows/s | 254k | 294k |
+| lookup p50 / p99, join by key | 45 / 64 µs, 50 µs | 44 / 60 µs, 50 µs |
+
+On one core the join went from 16.5 to 12.9 ms.
+
+**Smaller parts: tried first without kept threads.** At 20,000 rows the join split into only 4 parts (one per 4,096 rows), so at most 4 cores shared it. Splitting small tables into more parts didn't pay yet: with 1,024-row parts and no cap, the join took 9.7 ms on 32 threads against 6.2 ms on 8, because every step of a query started its helper threads afresh. Threads kept between queries remove that cost (below).
+
+**Threads kept between queries.** A query's helper threads now wait for the next query's work instead of being started for each step (at most `CHRONOS_THREADS - 1` of them wait). Same VM, both builds with mimalloc, medians of two interleaved rounds:
+
+| query | threads started per step | threads kept |
+|---|---|---|
+| protocol join + `GROUP BY` (20,000 rows, `examples/sql.rs`) | 8.5 ms | 7.4 ms |
+| protocol `GROUP BY age` (20,000 rows) | 2.3 ms | 1.8 ms |
+| in process, 200,000 rows: `count(*)` of orders | 5.0 ms | 2.8 ms |
+| in process, 200,000 rows: `count(*) WHERE amount > 500` | 5.4 ms | 4.1 ms |
+| in process, 200,000 rows: `GROUP BY age` | 11.9 ms | 9.8 ms |
+| in process, 200,000 rows: join + `GROUP BY` | 33.6 ms | 25.9 ms |
+| in process, 200,000 rows: join `WHERE name LIKE 'user 1%'` | 25.6 ms | 18.8 ms |
+
+On one thread (`CHRONOS_THREADS=1`, no helpers) nothing changes: 12.7 against 12.9 ms.
+
+**Small tables in more parts.** With threads kept, a table of 8,192 rows or more now splits into up to 16 parts of at least 1,024 rows (a bigger one still into one part per 4,096 rows). For such a table the parts are cut at runs of about 256 rows, several to a part. A stored run is one subtree, and subtrees vary in size: parts cut at single 1,024-row runs came out uneven, and a checkpointed 20,000-row `GROUP BY` got slower (2.8 to 3.6 ms) instead of faster. Same VM, medians of three interleaved rounds:
+
+| query | 4 parts | up to 16 parts |
+|---|---|---|
+| protocol join + `GROUP BY` (20,000 rows, `examples/sql.rs`) | 7.2 ms | 4.4 ms |
+| protocol `GROUP BY age` (20,000 rows) | 1.9 ms | 2.0 ms |
+| in process, 20,000 rows: join + `GROUP BY` | 8.6 ms | 3.5 ms |
+| in process, 20,000 rows: `GROUP BY age` | 2.8 ms | 1.6 ms |
+| in process, 20,000 rows: join `WHERE name LIKE 'user 1%'` | 6.6 ms | 2.5 ms |
+| in process, 50,000 rows: join + `GROUP BY` | 11.2 ms | 7.4 ms |
+| in process, 200,000 rows: join + `GROUP BY` (the other four within 0.2 ms too) | 25.5 ms | 25.3 ms |
+
+The protocol join + `GROUP BY` that started this, 11.5 ms against Postgres's 6.9 ms, now takes 4.4 ms.
 
 **Why the macOS default is so much faster at commits:** it doesn't flush the drive's cache, so a power cut can lose commits it acknowledged. By default Chronos flushes the drive's cache (`F_FULLFSYNC`); `alter system set synchronous_commit = normal` makes it do what Postgres does there (a plain `fsync`), and `off` stops waiting for the disk at all. The Linux comparison is in section 8: it found a real gap (Chronos's log file grew on every commit), now closed.
 

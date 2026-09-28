@@ -91,11 +91,12 @@ Headline numbers against the best rival measured on the same machine. Every row 
 | Filtered vector search, 500k × 384, p50 | **0.17–2.0 ms** | tuned pgvector 9.2–93 ms (**24–64×**) | [§2](BENCHMARKS.md#2-vector-search-vs-postgres--pgvector-phase-1-kill-gate-5-pgvector) |
 | Hybrid search (filter + text + vector), 1M rows, p99 | **~2 ms**, the same inside a fork | — | [§3](BENCHMARKS.md#3-hybrid-search-inside-branches-phase-3-targets-p99--5-ms-at-1m-fork-within-10-of-main) |
 | Durable single-row commits (Linux, fsync on both) | **644–806 /s** | Postgres 17: 591–656 /s | [§8](BENCHMARKS.md#8-the-losses-rerun-on-linux) |
-| Join + `GROUP BY`, 200k rows per table | **29.4 ms** | Postgres 16: 47.8 ms | [§4](BENCHMARKS.md#4-sql-over-the-postgres-protocol) |
+| Join + `GROUP BY` over the Postgres protocol, 20k rows per table (32-core Linux) | **4.4 ms** | Postgres 17: 6.9 ms | [§4](BENCHMARKS.md#4-sql-over-the-postgres-protocol) |
+| Join + `GROUP BY` in process, 200k rows per table (32-core Linux) | **25.3 ms** | DuckDB 1.5: 7.5 ms (**a loss, 3.4×**) · Postgres 17: 68.6 ms | [§4](BENCHMARKS.md#4-sql-over-the-postgres-protocol) |
 | 100,000 live worlds | **2.2 µs** fork · **456 B** disk per world | — | [§9](BENCHMARKS.md#9-many-worlds-10-to-100000) |
 
 > [!NOTE]
-> Sections 1–7 and 9–12 ran on an 8 GB Apple M2 laptop; sections 8 and the Dolt/DuckDB races on a GCP e2-highmem-4 (4 vCPU, 32 GB). They are engineering numbers, not a published benchmark. Methods and results for each are in [BENCHMARKS.md](BENCHMARKS.md).
+> Sections 1–7 and 9–12 ran on an 8 GB Apple M2 laptop; sections 8 and the Dolt/DuckDB races on a GCP e2-highmem-4 (4 vCPU, 32 GB); the two join rows on a GCP c2d-standard-32 (32 vCPU, 128 GB). They are engineering numbers, not a published benchmark. Methods and results for each are in [BENCHMARKS.md](BENCHMARKS.md).
 
 ---
 
@@ -390,15 +391,17 @@ Synthetic 500k × 384 against **tuned** pgvector (`shared_buffers = 2GB`, `ef_se
 
 ### SQL over the Postgres protocol
 
-200,000 rows per table, ms per query (M2, 8 cores; Postgres 16 with its default parallel workers):
+200,000 rows per table, ms per query, on a 32-core Linux VM (GCP c2d-standard-32). Chronos and DuckDB 1.5 run in process; Postgres 17 runs over local TCP with its default parallel workers:
 
-| query | Chronos, 1 core | **Chronos, 8 cores** | Postgres |
+| query | **Chronos** | Postgres 17 | DuckDB 1.5 |
 |---|---:|---:|---:|
-| `count(*)` | 15.9 | **4.8** | 6.8 |
-| `count(*) WHERE amount > 500` | 30.0 | **6.6** | 8.4 |
-| `GROUP BY` with `count`, `max` | 55.5 | **15.1** | 45.6 |
-| join, then `GROUP BY` with `sum` | 123.9 | **29.4** | 47.8 |
-| join `WHERE name LIKE 'user 1%'` | 107.1 | **22.5** | 29.4 |
+| `count(*)` | **2.8** | 6.4 | 0.4 |
+| `count(*) WHERE amount > 500` | **4.0** | 8.7 | 0.7 |
+| `GROUP BY` with `count`, `max` | **9.8** | 19.6 | 4.4 |
+| join, then `GROUP BY` with `sum` | **25.3** | 68.6 | 7.5 |
+| join `WHERE name LIKE 'user 1%'` | **18.6** | 45.2 | 7.7 |
+
+Over the Postgres protocol at 20,000 rows per table, join + `GROUP BY` takes **4.4 ms** against Postgres 17's 6.9 ms. DuckDB, a column store built for this kind of query, is 2–7× faster than Chronos on these reports.
 
 OLTP at equal durability (Linux, `fdatasync` on both): **644–806 commits/s** vs Postgres's 591–656; key join **71 µs** vs 92 µs.
 
