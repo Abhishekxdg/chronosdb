@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 (2026-09-29)
 
 **Vector search at 1M rows: 2.1× faster at the same recall, 3.5× at the new default beam, a third less memory to build**
 - On 1M real OpenAI embeddings (1,536 dimensions) over SQL, at the same 99.3% recall@10 (`SET hnsw.ef_search = 1000`): 2.30 ms p50, from 4.75 ms. At the new default: 1.36 ms p50 and 1.71 ms p99 at 98.6% recall@10, from 4.75 ms and 6.75 ms at 99.3%; one user's search (1%) 1.16 ms, from 3.59 ms. The server peaks at 9.0 GB building the index, from 14.4 GB ([BENCHMARKS §6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings)).
@@ -10,8 +10,20 @@
 - Leaves of wide rows are smaller: a row of 1 KB or more can also end its leaf, so leaves hold about 16 KB instead of about 32 rows (200 KB for 6 KB vectors), and fetching a row by key reads that much. Narrower rows keep their leaves as they were. Databases written before read, diff and merge the same, and need no migration.
 - A one-time cost in databases written before: the first edit to one of their wide leaves rewrites it whole (as before) but as several smaller leaves. On 20,000 rows of about 3 KB, 50 such edits wrote 323 pages where the old rule wrote 62, and 23% more bytes (94.6 KB against 77.1 KB); the same keys edited again wrote 49.7 KB, less than a tree built now (92.3 KB). A 1M-row table of 6 KB rows turns over once, leaf by leaf as it's edited: about its own size in writes, as before, in about twelve times the pages (about 2.5 rows a leaf instead of 32), after which an edit rewrites a 16 KB leaf instead of a 200 KB one. A diff between a fork made before and main after reads the rewritten leaves on main's side (323 pages, 94.6 KB here) and the old ones on the fork's (63 pages, 77.5 KB), where the old rule read 62 and 62 pages.
 
-**World names MERGE would misread are refused**
-- A world can't be named `ours`, `theirs`, `using`, `by`, `into`, `only`, `dry`, `confirm` or `resolve` (in any case): `MERGE WORLD ours` read the name as MERGE's own word and tried to merge main, failing with a confusing 0A000. Creating or forking one now fails with 42939 and says why. Worlds already named so still load and merge quoted (`MERGE WORLD "ours"`), and a MERGE that names no world on `main` says so.
+**A run's declared scope: what a world may change, held to at its merge**
+- `CREATE WORLD w WITH (may_change = 'leads.status, lists', tenant = 'org_id = 42', intent = '...', run = '...')` says, before the first write, which tables and columns the world is meant to change and which tenant's rows. A merge that changes anything else (another column, another tenant's row, a row moved out of the tenant, a view or a table's own definition) is refused (42501), or, for an agent keeping to a merge policy, queued for a person with what strayed. `MERGE ... DRY RUN` shows it.
+- The scope is shown in `SHOW WORLDS`, `SHOW REVIEWS` and a world's JSON over HTTP and MCP. Only the database's own users and admins may change it (`ALTER WORLD w SET (may_change = ...)`).
+- Merge policies have `require_scope`: its agents' forks must declare `may_change` or `tenant`.
+
+**Merge policies: `review_columns`**
+- `review_columns = 'users.email, accounts.owner'` sends any merge that changes one of those columns to a person, even for one row: an update changing it, an insert giving it a value, or a delete of a row that had one. Only the world's own changes count (not the parent's, combined in `BY COLUMNS`). Shown in `SHOW MERGE POLICIES`, and set over MCP with `set_merge_policy`.
+
+**Effects that happen only on merge: `NOTIFY ON MERGE` and the outbox**
+- `NOTIFY ON MERGE channel, 'payload'` in a world queues a notification that nobody hears while the world is worked on, that's dropped if the world is discarded or the transaction rolled back, and that's sent to `main`'s listeners when a merge (or a transaction's `COMMIT`) brings it into `main`.
+- Landed effects wait in `main`'s outbox until a worker acknowledges them: `SHOW OUTBOX`, `ACK OUTBOX 'id', ...`. The database sends nothing out itself, so a worker that was down misses nothing. Merge policies don't count effects as changes.
+
+**Merge policies: limits per agent over an hour**
+- `rows_per_hour` and `deletes_per_hour` add up each agent's merges into `main` over the last hour, so a job split across several worlds is judged as a whole (`deletes_per_hour = 50`). Over the limit, the merge waits for a person. Merges between an agent's own worlds, and a person's merge approving one, don't count. The counts survive a restart.
 
 **Merge policies: `max_age`**
 - `max_age = '1h'`: an agent's world forked longer ago than that doesn't merge on its own; it waits in `SHOW REVIEWS` with its age as the reason (`was forked 2 h 5 min ago (at most 1 h)`). It complements `check_reads`, which catches reads that changed, not ones that are merely old.
@@ -19,20 +31,8 @@
 **Docs: start every agent with `max_deletes = 0`**
 - The merge-policies guide opens with it (no delete merges without a person; loosen later with a bound, `max_deletes` and `deletes_per_hour`), its recipes keep it, and the security guide, concepts, README and MCP's policy-drafting instructions point to it.
 
-**Merge policies: limits per agent over an hour**
-- `rows_per_hour` and `deletes_per_hour` add up each agent's merges into `main` over the last hour, so a job split across several worlds is judged as a whole (`deletes_per_hour = 50`). Over the limit, the merge waits for a person. Merges between an agent's own worlds, and a person's merge approving one, don't count. The counts survive a restart.
-
-**Effects that happen only on merge: `NOTIFY ON MERGE` and the outbox**
-- `NOTIFY ON MERGE channel, 'payload'` in a world queues a notification that nobody hears while the world is worked on, that's dropped if the world is discarded or the transaction rolled back, and that's sent to `main`'s listeners when a merge (or a transaction's `COMMIT`) brings it into `main`.
-- Landed effects wait in `main`'s outbox until a worker acknowledges them: `SHOW OUTBOX`, `ACK OUTBOX 'id', ...`. The database sends nothing out itself, so a worker that was down misses nothing. Merge policies don't count effects as changes.
-
-**Merge policies: `review_columns`**
-- `review_columns = 'users.email, accounts.owner'` sends any merge that changes one of those columns to a person, even for one row: an update changing it, an insert giving it a value, or a delete of a row that had one. Only the world's own changes count (not the parent's, combined in `BY COLUMNS`). Shown in `SHOW MERGE POLICIES`, and set over MCP with `set_merge_policy`.
-
-**A run's declared scope: what a world may change, held to at its merge**
-- `CREATE WORLD w WITH (may_change = 'leads.status, lists', tenant = 'org_id = 42', intent = '...', run = '...')` says, before the first write, which tables and columns the world is meant to change and which tenant's rows. A merge that changes anything else (another column, another tenant's row, a row moved out of the tenant, a view or a table's own definition) is refused (42501), or, for an agent keeping to a merge policy, queued for a person with what strayed. `MERGE ... DRY RUN` shows it.
-- The scope is shown in `SHOW WORLDS`, `SHOW REVIEWS` and a world's JSON over HTTP and MCP. Only the database's own users and admins may change it (`ALTER WORLD w SET (may_change = ...)`).
-- Merge policies have `require_scope`: its agents' forks must declare `may_change` or `tenant`.
+**World names MERGE would misread are refused**
+- A world can't be named `ours`, `theirs`, `using`, `by`, `into`, `only`, `dry`, `confirm` or `resolve` (in any case): `MERGE WORLD ours` read the name as MERGE's own word and tried to merge main, failing with a confusing 0A000. Creating or forking one now fails with 42939 and says why. Worlds already named so still load and merge quoted (`MERGE WORLD "ours"`), and a MERGE that names no world on `main` says so.
 
 ## 0.1.2 (2026-09-28)
 

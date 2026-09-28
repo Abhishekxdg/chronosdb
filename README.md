@@ -9,7 +9,7 @@ It speaks **Postgres**, searches **filters, text and vectors** in one query, and
 
 <br>
 
-![status](https://img.shields.io/badge/status-v0.1.2%20preview-f59e0b?style=flat-square)
+![status](https://img.shields.io/badge/status-v0.1.3%20preview-f59e0b?style=flat-square)
 ![rust](https://img.shields.io/badge/rust-1.90%2B-b7410e?style=flat-square&logo=rust&logoColor=white)
 ![postgres wire](https://img.shields.io/badge/postgres-wire%20protocol-336791?style=flat-square&logo=postgresql&logoColor=white)
 ![mcp](https://img.shields.io/badge/MCP-ready-7c3aed?style=flat-square)
@@ -88,8 +88,8 @@ Headline numbers against the best rival measured on the same machine. Every row 
 | 1,000 agents each fork, write 1,000 rows, merge (on disk, 64 workers each) | **713k–716k rows/s** | Dolt 28.3k rows/s (**25×**) · Postgres 17: 9.8k rows/s | [§1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
 | Merge p50, 1,000 agents at 25 workers (on disk) | **25–26 ms** | Postgres 17: 128 ms | [§1](BENCHMARKS.md#1-forks-and-concurrent-writes-phase-1-kill-gate-10-postgres) |
 | Vector search, 76k real OpenAI embeddings (1,536-d), p50 / recall@10 | **0.72 ms / 99.98%** | pgvector 1.01 ms / 82.0% · Weaviate 1.82 ms / 97.0% · Qdrant 3.73 ms / 98.8% | [§6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
-| Vector search, 1M real embeddings, p50 / recall@10 | 4.69 ms / **99.3%** | Weaviate **2.48 ms** / 98.2% · pgvector **2.40 ms** / 92.8% (**a loss on speed**; pgvector at 98.6% recall: 13.5 ms) | [§6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
-| Vector search for one user (1%), 1M real embeddings, p50 / recall@10 | **3.68 ms / 100%** | Milvus 3.89 ms / 99.7% · Weaviate 8.47 ms / 100% · pgvector 30.9 ms / 94.6% | [§6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+| Vector search, 1M real embeddings, p50 / recall@10 | **1.36 ms** / 98.6% | Chroma 2.25 ms / 96.8% · pgvector 2.40 ms / 92.8% · Weaviate 2.48 ms / 98.2% (pgvector at 98.6% recall: 13.5 ms) | [§6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
+| Vector search for one user (1%), 1M real embeddings, p50 / recall@10 | **1.16 ms / 100%** | Milvus 3.89 ms / 99.7% · Weaviate 8.47 ms / 100% · pgvector 30.9 ms / 94.6% | [§6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 | Filtered vector search, 1M × 384, p50 | **0.32–1.30 ms** | tuned pgvector 1.7–16 ms (**1.3–50×**) | [§2](BENCHMARKS.md#2-vector-search-vs-postgres--pgvector-phase-1-kill-gate-5-pgvector) |
 | Hybrid search (filter + text + vector), 1M rows, p99 | **~2.2 ms**, within 5% inside a fork | — | [§3](BENCHMARKS.md#3-hybrid-search-inside-branches-phase-3-targets-p99--5-ms-at-1m-fork-within-10-of-main) |
 | Durable single-row commits (fsync on both) | **2,395–2,543 /s** | Postgres 17: 2,286–2,320 /s | [§4](BENCHMARKS.md#4-sql-over-the-postgres-protocol) |
@@ -363,7 +363,7 @@ OpenAI embeddings (1,536-d, DBpedia) + 500 queries, top 10, eleven systems each 
 
 | system | 76k: p50 | recall@10 | 1M: p50 | recall@10 | 1M, one user (1%): p50 | recall@10 |
 |---|---:|---:|---:|---:|---:|---:|
-| **Chronos DB** (SQL, pgvector syntax) | **0.72 ms** | **99.98%** | 4.69 ms | **99.3%** | **3.68 ms** | **100%** |
+| **Chronos DB** (SQL, pgvector syntax) | **0.72 ms** | **99.98%** | 1.36 ms | 98.6% | **1.16 ms** | **100%** |
 | Redis 8.10 | 0.46 ms | 75.0% | 0.50 ms | 74.2% | 11.1 ms | 100% |
 | pgvector 0.8.6 | 1.01 ms | 82.0% | 2.40 ms | 92.8% | 30.9 ms | 94.6% |
 | Milvus 3.0 | 1.64 ms | 89.2% | 3.92 ms | 97.3% | 3.89 ms | 99.7% |
@@ -375,7 +375,7 @@ OpenAI embeddings (1,536-d, DBpedia) + 500 queries, top 10, eleven systems each 
 | Qdrant 1.19 | 3.73 ms | 98.8% | 6.67 ms | 99.0% | 5.83 ms | 99.98% |
 | OpenSearch 3.8 | 5.12 ms | 96.6% | 10.06 ms | 98.5% | 4.83 ms | 80.6% |
 
-Chronos has the best recall at both sizes and the fastest one-user search among systems that keep their recall. **At 1M, seven systems answer an all-rows search faster** at their defaults, all at lower recall; raised to 98.6% recall, pgvector takes 13.5 ms against Chronos's 4.69 ms at 99.3% ([§6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings)).
+At 1M, Chronos is the fastest of every system that finds more than 75% of the true top 10 (only Redis is faster, at 74%), and the fastest of all for one user; only Qdrant finds more (99.0% against 98.6%, at 6.67 ms). At 76k it has the best recall. Raised to Chronos's 98.6% recall, pgvector takes 13.5 ms against Chronos's 1.36 ms; at the 99.3% recall of Chronos's earlier default beam (`SET hnsw.ef_search = 1000`), Chronos takes 2.30 ms, still ahead of every rival that finds more than 96.8% ([§6](BENCHMARKS.md#6-vector-search-vs-other-vector-databases-on-real-embeddings)).
 
 Synthetic 1M × 384 against **tuned** pgvector (`shared_buffers = 8GB`, prewarmed, `ef_search = 300`, iterative scan):
 
@@ -434,11 +434,10 @@ Also measured: **Monte Carlo Tree Search** where every tree node is a world (Con
 | workload | result | why / plan |
 |---|---|---|
 | Analytics vs **DuckDB 1.5.5** (200k-row reports, 32 threads) | DuckDB **2.2–7× faster** | DuckDB is a columnar OLAP engine; Chronos stores rows. Columnar storage is not planned for v0.1; row counts in the tree and per-page min/max would narrow it |
-| Unfiltered vector search, 1M real embeddings | pgvector 2.40 ms, Weaviate 2.48 ms, Chroma 2.25 ms, Milvus 3.92 ms against Chronos **4.69 ms** | All at lower recall than Chronos's 99.3% (pgvector at 98.6% takes 13.5 ms). Where Chronos's time goes at 1M isn't profiled yet |
 | Merges on disk, 1,000 agents on one thread each | merge p50 **714–718 ms**, Postgres 128 ms (was 1,231 ms); fork p50 65–73 ms (was 4–5 ms); the run takes 1.8 s against 0.76 s in memory (was 5.0 s) | An open world's writes now reach the log in batches; forks and merges still hold the branch map's lock while they log, which parks the writers. At 25 workers: 1.4 s, merge p50 25–26 ms. See [BENCHMARKS §8](BENCHMARKS.md#8-the-losses-rerun-on-linux) |
 | Vector search inside a fork, 1M rows | **1.55×** main, unfiltered; 1.12× text (target: 1.1×) | Probably the fork's changed rows searched separately; not profiled yet |
 | Filtered vector search at 10%, 500k × 384 | **1.3×** tuned pgvector (the Phase 1 gate is 5×) | The other filter mixes pass (3.4–47×) |
-| Redis vector search (76k and 1M) | Redis **0.46–0.50 ms** against 0.72 and 4.69 ms | At its defaults Redis finds 74–75% of the true top 10; Chronos 99.3–99.98% |
+| Redis vector search (76k and 1M) | Redis **0.46–0.50 ms** against 0.72 and 1.36 ms | At its defaults Redis finds 74–75% of the true top 10; Chronos 98.6–99.98% |
 | Bulk vector load vs LanceDB | Chronos 4.7 s (76k), 64 s (1M) vs LanceDB **1.0 s, 12 s** | LanceDB takes an in-process Arrow table; Chronos gets rows over the Postgres protocol |
 | Server memory at 1M vectors | Chronos 7.7 GB after, 14.4 GB peak; Milvus 5.2 GB, Qdrant 6.6 GB | 6 GB of raw vectors; not investigated yet |
 
@@ -462,7 +461,7 @@ The Jepsen-style test found two real bugs before this release (money created by 
 
 ## Status and roadmap
 
-Chronos DB is a **working engine**, released as [v0.1.2](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.2) on 2026-09-28, and not yet used in production.
+Chronos DB is a **working engine**, released as [v0.1.3](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.3) on 2026-09-29, and not yet used in production.
 
 - [x] Worlds: fork, diff, three-way merge, partial merges, time travel, undo
 - [x] Postgres wire protocol and a broad SQL surface, checked against Postgres 17
@@ -478,6 +477,7 @@ Chronos DB is a **working engine**, released as [v0.1.2](https://github.com/Abhi
 - [x] First tagged release, [v0.1.0](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.0): signed binaries for macOS and Linux
 - [x] [v0.1.1](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.1): merge policies, the sqllogictest correctness run and its fixes, and the fourth review's fixes
 - [x] [v0.1.2](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.2): `chronos import postgres://`, merge checks, the stale-read check, what a change affects, merging by columns per table, and faster joins and agent writes on many cores
+- [x] [v0.1.3](https://github.com/Abhishekxdg/chronosdb/releases/tag/v0.1.3): vector search at 1M 2.1× faster at the same recall, a run's declared scope, `review_columns`, effects only on merge (`NOTIFY ON MERGE`), limits per agent over an hour, and `max_age`
 - [x] A plain scan's memory stays flat as tables grow: a `count(*)` or `sum` needs +6 to +8 MB at 1M to 10M rows (it was +63 MB at 10M, and RSS 250 MB is now 107 MB). What still grows is the page directory an open database keeps, about 3 MB per million narrow rows
 - [x] Bulk vector ingest: `COPY FROM STDIN (FORMAT binary)` with pgvector's binary vectors, COPY streaming into its INSERT, vectors stored 7 bits to a character. Loading 76k embeddings is now bound by the disk, not the protocol (it decodes them all in 0.7 s); LanceDB's 2 s load doesn't wait for the disk (no fsync)
 - [x] Write less per vector load: integer keys are stored in number order (tables made from now on), so a load in id order goes straight into the tree. A binary COPY of 76k embeddings writes 526 MB (it was 1.82 GB) in 8–15 s
