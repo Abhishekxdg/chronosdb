@@ -31,7 +31,7 @@ Three things make this safe while data keeps changing:
 
 - **What's checked is what merges.** The rules run inside the merge, while it holds its locks, on the rows it's about to apply. Nothing written a moment before or after can slip past the check, and there's no gap between "checked" and "merged" for a race to use.
 - **Stale work doesn't win.** If `main` changed a row after the agent forked, a merge that would overwrite it (`USING OURS`, or rows picked by hand) needs a person, unless the policy allows `overwrite`. Without `USING OURS`, those rows are conflicts and the merge fails anyway.
-- **The queue says when it's out of date.** `SHOW REVIEWS` records the world's version when the agent asked. `changed_since` is true if the agent kept writing afterwards, so you know the diff you're about to approve isn't the one that was refused.
+- **The queue says when it's out of date.** `SHOW REVIEWS` records the world's version when the agent asked. `changed_since` is true if the agent kept writing afterwards, or part of the world was merged since, so you know the diff you're about to approve isn't the one that was refused.
 
 A policy only ever takes rights away: an agent needs `merge_own` or `merge` to merge at all, and a policy decides which of those merges need a person. An agent keeping to a policy changes `main` **only by merging**: its `write_main` right lets its merges reach `main`, but a direct `INSERT`, `UPDATE`, `DELETE`, `put` or restore on `main` is refused, since it would skip the rules. So are `UNDO MERGE` and `UNDO AGENT`, which write their rows straight into a world. People, and agents without a policy, act as their rights alone decide.
 
@@ -202,6 +202,7 @@ alter merge policy careful set (max_rows = 100);       -- the named rules change
 alter merge policy careful set (max_deletes = null);   -- null: no limit
 alter agent bot set (policy = null);                   -- bot's rights alone decide now
 drop merge policy careful;                             -- refused while an agent keeps to it
+drop merge policy careful cascade;                     -- its agents keep to none from now on, in the same step
 ```
 
 Only an `admin` creates, changes or drops policies, or gives one to an agent. Any agent may `SHOW MERGE POLICIES` and `SHOW REVIEWS`, so it can see its own rules.
@@ -230,7 +231,7 @@ The same rules apply over MCP. With `chronos mcp shopdb --agent bot`, the agent'
 | `merge_policies` | the policies, and which agents keep to each |
 | `check_merge_policy` | tries rules on a branch's real changes: would it merge on its own, and if not, why |
 | `set_merge_policy` | creates or changes a policy and gives it to agents (needs `admin`) |
-| `drop_merge_policy` | removes one (`release_agents` takes it from its agents first) |
+| `drop_merge_policy` | removes one (`release_agents` takes it from its agents in the same step) |
 | `reviews` | the queue |
 
 Try rules on real work before any agent keeps to them. `rules` changes a named policy's rules for this one check, so you can ask "what if?" without changing anything:
@@ -274,7 +275,7 @@ curl -s localhost:7070/v1/alter_agent -H 'Content-Type: application/json' -d '{"
 
 - **Counts, not content:** rules look at which tables change and how many rows, not at values. "Refunds under $50 may merge" isn't a rule yet. Put such tables in `review_tables`, or give the agent a separate world and a stricter policy.
 - **One policy per agent.** Give agents that need different rules different policies.
-- **A partial approval leaves the entry:** after `MERGE ... ONLY TABLES` of a queued world, it stays in `SHOW REVIEWS` with the rest of its changes. Drop the world, or merge the rest, to clear it.
+- **A partial approval leaves the entry:** after `MERGE ... ONLY TABLES` of a queued world, it stays in `SHOW REVIEWS` with the rest of its changes, with `changed_since` true (its reasons were for the whole world). The world's version doesn't move, so a client's merge at the version it had still works. Drop the world, or merge the rest, to clear it.
 - **Merges into other worlds:** a policy checks every merge its agent runs, into `main` or any world, but only `main` is closed to its direct writes. Other worlds it may write (its own, or any with `write`) it writes directly.
 - **One queue entry per world:** a world refused again updates its entry (new reasons, version and time).
 

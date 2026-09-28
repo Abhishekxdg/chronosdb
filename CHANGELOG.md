@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**Merge policies**
+- `ALTER MERGE POLICY` and `CREATE MERGE POLICY` read, change and write in one step: two changes at once both land, a policy dropped meanwhile isn't written back, and two creates of one name can't both succeed.
+- `DROP MERGE POLICY name CASCADE` takes the policy from its agents and drops it in one step; MCP's `drop_merge_policy` with `release_agents` uses it, so agents are never released without the drop.
+- `SHOW REVIEWS`: after a partial merge (`ONLY TABLES`, `ONLY KEYS`) of a queued world, `changed_since` is true. The world's version doesn't move, so clients' merges at the version they had still work.
+
 **What a change affects: readers of every changed column**
 - `DIFF WORLD w [TO b] READERS` lists what in the database reads each column the diff changes: views and materialized views (traced column by column through their queries, views on views included), merge checks, triggers (by event and `UPDATE OF`), functions (where their text names the table and column), primary keys, unique constraints, foreign keys (both directions), CHECK constraints and indexes (expressions and `WHERE` included). Rows added or deleted reach every reader of their table.
 - Clients seen reading: SQL over the Postgres protocol records which columns each client reads (by role, and `application_name`), and over HTTP by agent; a change's readers name them with when they last read. `REGISTER READER name ON table (cols)` names readers outside SQL (exports, sync tools), kept in the world; `UNREGISTER READER`, `SHOW READERS`.

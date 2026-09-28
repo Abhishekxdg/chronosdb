@@ -371,16 +371,16 @@ An unknown rule, or a value of the wrong type, is refused with the rules' names.
 
 ### drop_merge_policy
 
-Removes a merge policy. Refused while an agent keeps to it, unless `release_agents`. Needs `admin`; in safe mode, drafts the SQL like `set_merge_policy`.
+Removes a merge policy. Refused while an agent keeps to it, unless `release_agents` (`DROP MERGE POLICY ... CASCADE`: released and dropped in one step). Needs `admin`; in safe mode, drafts the SQL like `set_merge_policy`.
 
 | Parameter | Type | Required | Default |
 |---|---|---|---|
 | `name` | string | yes | |
-| `release_agents` | boolean | no | `false`; `true`: first take the policy from its agents (their rights alone decide then) |
+| `release_agents` | boolean | no | `false`; `true`: take the policy from its agents in the same step (their rights alone decide then) |
 
 ### reviews
 
-Merges a policy sent to a person, oldest first: `world`, `owner`, `policy`, `reasons`, `asked`, `version`, `changed_since` (the branch was written to after its agent asked). A person approves with `merge` (or `MERGE WORLD`), or throws it away with `discard`. No parameters. Runs [`SHOW REVIEWS`](worlds.md#merge-policies).
+Merges a policy sent to a person, oldest first: `world`, `owner`, `policy`, `reasons`, `asked`, `version`, `changed_since` (the branch was written to, or partly merged, after its agent asked). A person approves with `merge` (or `MERGE WORLD`), or throws it away with `discard`. No parameters. Runs [`SHOW REVIEWS`](worlds.md#merge-policies).
 
 ### merge_checks
 

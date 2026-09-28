@@ -576,11 +576,12 @@ while the world and its parent keep changing.
 ```
 CREATE MERGE POLICY name [WITH (key = value, ...)]  -- the policy's row, tag CREATE MERGE POLICY
 ALTER MERGE POLICY name SET (key = value, ...)      -- the keys named change; the rest stay
-DROP MERGE POLICY name                              -- refused (22023) while an agent keeps to it
+DROP MERGE POLICY name [CASCADE]                    -- refused (22023) while an agent keeps to it, unless
+                                                    -- CASCADE: then its agents keep to none (a NOTICE each)
 SHOW MERGE POLICIES                                 -- name, max_rows, max_deletes, tables, review_tables,
                                                     -- schema, overwrite, critical, created
 SHOW REVIEWS                                        -- world, owner, policy, reasons, asked, version,
-                                                    -- changed_since (written to since the agent asked)
+                                                    -- changed_since (written to, or partly merged, since the agent asked)
 ALTER AGENT name SET (policy = 'name')              -- or policy = null
 ```
 
