@@ -359,6 +359,8 @@ Creates a merge policy, or changes the rules given of an existing one (the other
 |---|---|---|---|
 | `max_rows` | integer or `null` | it changes more rows than this | `null`: no limit |
 | `max_deletes` | integer or `null` | it deletes more rows than this; `0`: any delete | `null`: no limit |
+| `rows_per_hour` | integer or `null` | with the agent's other merges into main in the last hour, it changes more rows than this | `null`: no limit |
+| `deletes_per_hour` | integer or `null` | with the agent's other merges into main in the last hour, it deletes more rows than this | `null`: no limit |
 | `tables` | array of strings | it changes a table not in the list | `[]`: any table |
 | `review_tables` | array of strings | it changes any table in the list | `[]` |
 | `review_columns` | array of strings | it changes any column in the list (`"users.email"`), even in one row | `[]` |

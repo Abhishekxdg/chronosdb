@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**Merge policies: limits per agent over an hour**
+- `rows_per_hour` and `deletes_per_hour` add up each agent's merges into `main` over the last hour, so a job split across several worlds is judged as a whole (`deletes_per_hour = 50`). Over the limit, the merge waits for a person. Merges between an agent's own worlds, and a person's merge approving one, don't count. The counts survive a restart.
+
 **Effects that happen only on merge: `NOTIFY ON MERGE` and the outbox**
 - `NOTIFY ON MERGE channel, 'payload'` in a world queues a notification that nobody hears while the world is worked on, that's dropped if the world is discarded or the transaction rolled back, and that's sent to `main`'s listeners when a merge (or a transaction's `COMMIT`) brings it into `main`.
 - Landed effects wait in `main`'s outbox until a worker acknowledges them: `SHOW OUTBOX`, `ACK OUTBOX 'id', ...`. The database sends nothing out itself, so a worker that was down misses nothing. Merge policies don't count effects as changes.

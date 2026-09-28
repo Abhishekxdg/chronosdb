@@ -623,7 +623,8 @@ ALTER MERGE POLICY name SET (key = value, ...)      -- the keys named change; th
 DROP MERGE POLICY name [CASCADE]                    -- refused (22023) while an agent keeps to it, unless
                                                     -- CASCADE: then its agents keep to none (a NOTICE each)
 SHOW MERGE POLICIES                                 -- name, max_rows, max_deletes, tables, review_tables, review_columns,
-                                                    -- schema, overwrite, critical, check_reads, require_scope, created
+                                                    -- schema, overwrite, critical, check_reads, require_scope,
+                                                    -- rows_per_hour, deletes_per_hour, created
 SHOW REVIEWS                                        -- world, owner, policy, reasons, asked, version,
                                                     -- changed_since (written to, or partly merged, since the agent asked),
                                                     -- scope (what the world was forked to change)
@@ -634,6 +635,8 @@ ALTER AGENT name SET (policy = 'name')              -- or policy = null
 |---|---|---|
 | `max_rows` | it changes more rows than this | `null` (no limit) |
 | `max_deletes` | it deletes more rows than this (`0`: any delete) | `null` (no limit) |
+| `rows_per_hour` | it's a merge into `main`, and with the agent's other merges into `main` in the last hour it changes more rows than this | `null` (no limit) |
+| `deletes_per_hour` | likewise for deleted rows (`50`: at most 50 deletes an hour, however the job is split) | `null` (no limit) |
 | `tables` | it changes a table not in this list (`'orders,items'`) | any table |
 | `review_tables` | it changes any table in this list | none |
 | `review_columns` | it changes any column in this list (`'users.email,accounts.owner'`), even in one row: an update changing it, an insert giving it a value, a delete of a row with one | none |

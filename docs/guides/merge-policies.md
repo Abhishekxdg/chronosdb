@@ -71,9 +71,9 @@ show merge policies;
 ```
 
 ```
-  name   | max_rows | max_deletes | tables | review_tables | review_columns | schema | overwrite | critical | check_reads | require_scope |          created
----------+----------+-------------+--------+---------------+----------------+--------+-----------+----------+-------------+---------------+---------------------------
- careful |        3 |           0 |        | payments      |                | f      | f         | f        | f           | f             | 2026-09-27 16:19:35.06+00
+  name   | max_rows | max_deletes | tables | review_tables | review_columns | schema | overwrite | critical | check_reads | require_scope | rows_per_hour | deletes_per_hour |          created
+---------+----------+-------------+--------+---------------+----------------+--------+-----------+----------+-------------+---------------+---------------+------------------+---------------------------
+ careful |        3 |           0 |        | payments      |                | f      | f         | f        | f           | f             |               |                  | 2026-09-27 16:19:35.06+00
 ```
 
 Every rule is optional. A rule left out doesn't limit anything, except `schema` and `overwrite`, which are `false` (the safe side) until you allow them:
@@ -82,6 +82,8 @@ Every rule is optional. A rule left out doesn't limit anything, except `schema` 
 |---|---|---|
 | `max_rows` | it changes more rows than this | no limit |
 | `max_deletes` | it deletes more rows than this; `0` means any delete | no limit |
+| `rows_per_hour` | together with the agent's other merges into `main` in the last hour, it changes more rows than this | no limit |
+| `deletes_per_hour` | together with the agent's other merges into `main` in the last hour, it deletes more rows than this | no limit |
 | `tables` | it changes a table not in this list (`'orders,items'`) | any table |
 | `review_tables` | it changes any table in this list | none |
 | `review_columns` | it changes any column in this list (`'users.email,accounts.owner'`), even in one row: identity, owner and billing fields, where a quiet wrong value does more harm than a loud delete | none |
@@ -90,6 +92,8 @@ Every rule is optional. A rule left out doesn't limit anything, except `schema` 
 | `critical` | `false` and it changes a column a reader marked critical reads (`MARK READER billing CRITICAL`) | `false` |
 | `check_reads` | `true` and it read rows that changed in its parent since the fork (its agent decided on state that's gone) | `false` |
 | `require_scope` | never itself: `true` makes its agents declare what each world may change when forking it (`may_change`, `tenant`); a merge outside that [declared scope](../reference/worlds.md#declared-scope-may_change-tenant) waits for a person | `false` |
+
+`max_rows` and `max_deletes` judge one merge, so an agent that splits a job across several worlds stays under them. `rows_per_hour` and `deletes_per_hour` add up each agent's merges into `main` over the last hour (a sliding window), this one included: `deletes_per_hour = 50` holds an agent to 50 deletes an hour however it splits them. Only an agent's own merges that land in `main` count: not merges between its worlds (they count when they reach `main`), not merges queued for review, and not a person's merge approving one. The counts are kept beside the log (the `tallies` file) and survive a restart.
 
 Rows are counted as the merge would apply them: one per row it inserts, updates or deletes in the parent, after `ONLY TABLES` / `ONLY KEYS`. A row settled `USING THEIRS` (the parent's value kept) changes nothing, so it doesn't count. Table names are read as SQL reads them: `orders` is folded to lowercase, and `"Orders"`, quoted, is another table (`tables = 'orders,"Orders"'`). The database's own bookkeeping (indexes, constraint rows, `serial` counters) doesn't count. Rows combined `BY COLUMNS` never count as overwrites: they keep the parent's changed columns.
 
@@ -176,10 +180,10 @@ show reviews;
 ```
 
 ```
-   world    | owner | policy  |              reasons               |           asked            | version | changed_since
-------------+-------+---------+------------------------------------+----------------------------+---------+---------------
- bot_bulk   | bot   | careful | changes 6 rows (at most 3)         | 2026-09-27 16:19:35.137+00 |       1 | f
- bot_refund | bot   | careful | changes payments (always reviewed) | 2026-09-27 16:19:35.141+00 |       1 | f
+   world    | owner | policy  |              reasons               |           asked            | version | changed_since | scope
+------------+-------+---------+------------------------------------+----------------------------+---------+---------------+-------
+ bot_bulk   | bot   | careful | changes 6 rows (at most 3)         | 2026-09-27 16:19:35.137+00 |       1 | f             |
+ bot_refund | bot   | careful | changes payments (always reviewed) | 2026-09-27 16:19:35.141+00 |       1 | f             |
 ```
 
 Oldest first. Look at a merge as you would any world, then approve it by merging, or reject it by dropping:
