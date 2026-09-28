@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**Move from Postgres in one command: `chronos import <folder> postgres://...`**
+- Reads a live Postgres's catalog and brings over schemas, enum types, sequences (continued past the rows), tables with their columns, defaults, keys, `UNIQUE` and `CHECK`, every row (COPY, text format, a table at a time), then foreign keys, indexes, views and materialized views. Extensions, functions, triggers, row-level security, roles, and anything Chronos refuses are listed in a report instead of stopping the import. `--dry-run` tries every definition on an empty in-memory database and writes nothing.
+- A small Postgres client of its own (TLS as libpq's `sslmode`, SCRAM-SHA-256), so the binary gains no dependency.
+
 **Merge policies**
 - `ALTER MERGE POLICY` and `CREATE MERGE POLICY` read, change and write in one step: two changes at once both land, a policy dropped meanwhile isn't written back, and two creates of one name can't both succeed.
 - `DROP MERGE POLICY name CASCADE` takes the policy from its agents and drops it in one step; MCP's `drop_merge_policy` with `release_agents` uses it, so agents are never released without the drop.

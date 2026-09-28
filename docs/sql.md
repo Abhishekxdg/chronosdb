@@ -714,6 +714,33 @@ Execution Time: 0.061 ms
 
 Text compares and sorts by its bytes (UTF-8), as Postgres does with `COLLATE "C"`: `'Z'` comes before `'a'`, and `'é'` after `'z'`. Indexes use the same order, so `LIKE 'abc%'` is a range. Postgres databases made with another collation (such as `en_US.UTF-8`) order text differently.
 
+## Moving from Postgres
+
+`chronos import` with a Postgres URL moves a whole database, while it runs:
+
+```bash
+chronos import mydb postgres://ada:secret@db.example.com:5432/shop --dry-run   # what would come over, nothing written
+chronos import mydb postgres://ada:secret@db.example.com:5432/shop
+```
+
+```
+"customers": 5000 rows
+"orders": 18230 rows
+
+imported 2 of 2 tables (23230 rows) into main, and 3 foreign keys, indexes and views
+
+not imported (2):
+  - function public.touch_updated_at: not imported (recreate it with CREATE FUNCTION)
+  - trigger orders_touch on orders: triggers and their functions aren't imported
+```
+
+- **What comes over:** schemas, enum types, sequences (set to where Postgres had them, so `serial` and identity columns go on from there), tables with their columns, types, `NOT NULL`, defaults, primary keys, `UNIQUE` and `CHECK` constraints, then every row, then foreign keys (checked against the rows), indexes, views and materialized views.
+- **What doesn't, reported instead of stopping the rest:** extensions (except `vector` and `postgis`, which are built in), functions, triggers, row-level security, roles and grants (give each program an agent instead), and any table, type or statement Chronos refuses, with its reason. A table whose rows fail to load stays, empty, and is named in the report.
+- **Rows** move in COPY's text format, a table at a time, each as one `INSERT`: Chronos reads each value as its column's type, so types whose binary form it doesn't read (`uuid`, `bytea`, arrays) come over too, and floats come over exactly (Postgres 12 and later print them so they read back the same).
+- **Connecting:** `sslmode` works as in libpq: `prefer` (the default: TLS if the server offers it, without checking whose certificate), `disable`, `require`, and `verify-full` (checks the certificate against `sslrootcert=<file.pem>` or the system's CAs; `verify-ca` does the same). Logins: trust, a password, and SCRAM-SHA-256; MD5 isn't supported (set `password_encryption = scram-sha-256`). The password can come from `PGPASSWORD`. TCP only, no Unix sockets.
+- **Where it goes:** into `main`, or `-b <world>`. The folder must not be open in another process. Names are kept: `public.orders` is `orders`, other schemas' tables keep their schema (`app.orders`).
+- **Text order:** Chronos sorts text by bytes, as `COLLATE "C"` does (see [Text order](#text-order)).
+
 ## Importing a Postgres table
 
 `chronos import` copies one table from Postgres into a new table, to try Chronos on your own data.

@@ -20,6 +20,7 @@ chronos mcp mydb                              # MCP server for AI agents, over s
 | `chronos <folder> < script.txt` | runs stdin, one command per line (SQL may span lines and ends with `;`) |
 | `chronos serve <folder>` | the HTTP JSON API and the Postgres protocol, until SIGTERM or Ctrl-C |
 | `chronos mcp <folder>` | an MCP server over stdio |
+| `chronos import <folder> postgres://user:password@host:port/database [--dry-run]` | a whole Postgres database, moved in one command (see [SQL](../sql.md#moving-from-postgres)) |
 | `chronos import <folder> <table> <data.csv> --schema <schema.csv>` | a copy of one Postgres table (see [SQL](../sql.md)) |
 | `chronos restore <backup> <new folder>` | starts a database from a backup folder, and verifies it |
 | `chronos keygen` | prints a new encryption key (see [encryption](../operations.md#encryption-at-rest)) |
@@ -50,6 +51,7 @@ Flags may go anywhere on the line. A flag that takes a value and has none prints
 | `--allow-merge` | off | `mcp` | lets the MCP client merge; without it agents change only worlds they fork, and a person merges |
 | `--agent <name>` | none | `mcp` | the MCP client acts as that agent (it must exist), with its permissions and limits |
 | `--schema <schema.csv>` | none | `import` | the table's columns; required |
+| `--dry-run` | off | `import ... postgres://` | read Postgres and try every definition on an empty in-memory database: the report, and nothing written |
 
 An empty `--token`, `--admin-token`, `--tls-cert` or `--tls-key` (or its variable) counts as not given. The encryption key is never a flag, so it can't show in the process list: see `CHRONOS_KEY` below.
 
