@@ -14,6 +14,11 @@
 - `x IS [NOT] DISTINCT FROM y`: `<>` and `=` where null is a value like any other, in queries, parameters and PL/pgSQL (a ledger trigger's `NEW.amount IS DISTINCT FROM OLD.amount`). It was a syntax error.
 - `pg_advisory_lock`, `pg_advisory_xact_lock`, their `try` kinds, `pg_advisory_unlock[_all]`, and `hashtext` (Postgres's own hash). A lock another session holds waits, within the statement timeout, and a cycle of waits fails with 40P01. A transaction that waited for a lock released by another's commit reads the database anew from its next statement, so it sees what that one committed; one that already wrote fails with 40001. Shared advisory locks are 0A000.
 
+**`VALUES` lists as queries, `SHOW` and `current_setting()` of Postgres's settings, custom settings**
+- `(VALUES (1, 'a'), (2, 'b')) AS t(id, name)` in `FROM`, in `IN (...)`, in `WITH`, and `VALUES ...` on its own (with `ORDER BY` and `LIMIT`); columns `column1`, `column2`, ... unless named. They were syntax errors.
+- `SHOW server_version`, `SHOW transaction isolation level`, `current_setting('TimeZone')` and the other common Postgres settings answer with what Chronos does (`repeatable read`, `lc_collate` `C`, ...); they were syntax errors. Unknown names are 42704.
+- Custom settings, as row-level filters use them: `SET app.org_id = '42'`, `SET LOCAL`, `set_config(name, value, is_local)`, `RESET`, `RESET ALL`, read with `current_setting()`; and `application_name`, from `SET` or the connection.
+
 **Vector columns of 1M rows in 60% less memory, with the same answers**
 - A vector column keeps its numbers as floats while it holds at most 64M of them (256 MB), and at 8 bits a number above that, each vector with its own scale: at 1M real embeddings (1,536 dimensions) the server holds 3.1 GB after the run, from 7.7 GB, and peaks at 7.7 GB building the index, from 9.1 GB. The index builds 2.3 times faster (58.7 s, from 133.5 s).
 - 8-bit numbers alone can't tell near-duplicates apart (94% of the true top 10 at 1M), so such an index proposes twice the rows asked for and ranks them from the rows' own vectors, read on the free cores: 1.34 ms at 98.6% recall@10, against 1.32 ms at 98.7% with floats; one user 1.19 ms at 100%. SQL and `find` (HTTP, MCP) both rank that way, and their scores stay exact.
