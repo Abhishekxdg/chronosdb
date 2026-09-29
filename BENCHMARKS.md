@@ -25,9 +25,8 @@
 | **Weaviate, Redis** | one-user (1%) vector search p99, 76k | 2.1–2.3 ms | **1.46 ms, 1.23 ms** | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 | **Postgres 17** | one order joined to its row by key, over the protocol | 52 µs | **50 µs** | [4](#4-sql-over-the-postgres-protocol) |
 | **Redis, Weaviate** | server memory after the 76k run | 1.14 GB (2.3 GB at its peak) | 1.05 GB, 1.10 GB | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
-| **Milvus, Qdrant, OpenSearch** | server memory at 1M real embeddings | 7.7 GB after the run, 9.0 GB at its peak (14.4 GB before) | 5.2 GB, 6.6 GB, 8.9 GB after (6 GB of raw vectors) | [6](#6-vector-search-vs-other-vector-databases-on-real-embeddings) |
 
-The merge row's cause is found and its fix is being built (section 1, TODOS.md). No longer losses: unfiltered vector search at 1M, 4.69 ms before and 1.36 ms since (section 6, "Where the 1M search's time went"), now faster than every system that finds more than 75% of the true top 10; the 8.6 ms vector p99 of this rerun's first runs was a readiness bug, fixed in the same change (section 6); the protocol join + `GROUP BY` is 4.4 ms against Postgres's 6.9 ms since #22 (section 4); and the slow checkpoint and reopen at 100,000 worlds came from the loaded laptop (section 9).
+The merge row's cause is found and its fix is being built (section 1, TODOS.md). No longer losses: server memory at 1M real embeddings, 7.7 GB after the run before and 3.1 GB since (section 6, "Memory at 1M"), under Milvus's 5.2 GB and Qdrant's 6.6 GB; unfiltered vector search at 1M, 4.69 ms before and 1.36 ms since (section 6, "Where the 1M search's time went"), now faster than every system that finds more than 75% of the true top 10; the 8.6 ms vector p99 of this rerun's first runs was a readiness bug, fixed in the same change (section 6); the protocol join + `GROUP BY` is 4.4 ms against Postgres's 6.9 ms since #22 (section 4); and the slow checkpoint and reopen at 100,000 worlds came from the loaded laptop (section 9).
 
 ## 1. Forks and concurrent writes (Phase 1 kill gate: 10× Postgres)
 
@@ -323,7 +322,7 @@ Chronos ranges are two runs of the PR build; the others ran once each, and pgvec
 
 | system | load | index | all rows: p50 | p99 | recall@10 | one user: p50 | p99 | recall@10 | memory after |
 |---|---|---|---|---|---|---|---|---|---|
-| **Chronos DB** (SQL) | 64.2 s | 135 s | 1.36 ms | **1.71 ms** | 98.6% | **1.16 ms** | **1.33 ms** | **100%** | 7.7 GB (9.0 GB peak) |
+| **Chronos DB** (SQL) | 63.7 s | 58.7 s | 1.34 ms | **1.73 ms** | 98.6% | **1.19 ms** | 1.56 ms | **100%** | **3.1 GB** (7.7 GB peak) |
 | Redis 8.10 | 208 s | — | **0.50 ms** | **2.23 ms** | 74.2% | 11.1 ms | 11.9 ms | 100% | 13.2 GB |
 | Chroma 1.5.9 (embedded) | 586 s | — | 2.25 ms | 2.74 ms | 96.8% | 265 ms | 290 ms | 99.7% | — |
 | pgvector 0.8.6 | 88.6 s | 427 s | 2.40 ms | 4.03 ms | 92.8% | 30.9 ms | 59.1 ms | 94.6% | — |
@@ -378,6 +377,20 @@ The engine-alone column is two rounds of `examples/walk.rs`, main against the br
 
 **Smaller leaves for wide rows** change where leaves end, so pages are laid out differently from here on. Rows under 1 KB end their leaves exactly where they did, so narrow tables keep their pages. A database written before reads, diffs, merges and verifies the same (`tests/layout.rs`, on a database written by v0.1.2), and edits on its trees reuse their untouched subtrees, since every place a leaf ended before is still an end. The first edit to an old wide leaf rewrites it as several smaller ones: about the bytes the rule before wrote for it, and edits after that cost what they do on a tree built now (`prolly::tests`). No format version changes: reading doesn't depend on where leaves end.
 
+### Memory at 1M (2026-09-29)
+
+The index held every vector as 4-byte floats, 6.1 GB of the 7.7 GB the server kept after the 1M run. A vector column now keeps floats only while it holds at most 64M numbers, and 8 bits a number above that, each vector with its own scale. Ranked by 8-bit numbers alone, the 1-bit scan found 94.5% of the true top 10 however many candidates it rescored (16, 32 or 64 per result; 99.98% with floats), because DBpedia's near-duplicate entities differ by less than the rounding (`20-walk.out`). So an 8-bit index proposes twice the rows asked for and ranks them from the rows' own vectors, read on the free cores. Same machine, back to back, over SQL ([`bench/results/2026-09-29-vec-int8`](bench/results/2026-09-29-vec-int8)):
+
+| build | all rows: p50 / p99 | recall@10 | one user: p50 / recall@10 | index build | after the run | peak |
+|---|---|---|---|---|---|---|
+| floats (main, `31-`) | 1.32 / 1.67 ms | 98.7% | 1.14 ms / 100% | 133.5 s | 7.66 GB | 9.07 GB |
+| 8-bit alone (`30-`) | 1.33 / 1.65 ms | 93.8% | 1.18 ms / 95.9% | 58.8 s | 3.06 GB | 7.67 GB |
+| 8-bit, 4x candidates ranked exactly, one at a time (`40-`) | 2.33 / 2.85 ms | 98.7% | 2.32 ms / 100% | 58.5 s | 3.11 GB | 7.61 GB |
+| 8-bit, 4x, on the free cores (`44-`) | 1.44 / 1.95 ms | 98.7% | 1.45 ms / 100% | 58.6 s | 3.09 GB | 7.80 GB |
+| **8-bit, 2x, on the free cores (`45-`, the default)** | **1.34 / 1.73 ms** | **98.6%** | **1.19 ms / 100%** | **58.7 s** | **3.09 GB** | **7.67 GB** |
+
+The index builds 2.3 times faster too: its graph is built on 8-bit numbers (44 s against 118 s in `examples/walk.rs`), and its self-test gives 97.5–97.7% as it did with floats. At the recall of the old default beam (`SET hnsw.ef_search = 1000`) it takes 2.24 ms for 99.3% of the true top 10, against 2.30 ms for 99.3% with floats (`46-`).
+
 ### The p99 this rerun found, and fixed
 
 The first 76k runs gave Chronos a p99 of 7.8–8.6 ms against a 1 ms median, even with Chronos running alone. Over three passes of the same 500 queries, the slow ones were all in the first pass and weren't the same queries as the slowest later ones (correlation 0.06; `19-p99diag.out`): p99 8.0 ms, then 1.09 and 1.08 ms. The cause: after an index builds its HNSW graph, it tests it with 128 exact searches spread over every core, and the server said its graphs were built (`search_graphs_building` 0) as soon as the graph existed, before that test ended. So the benchmark, which waits for that signal, timed Chronos's first searches against the test; every other system was timed after its own indexing ended. A graph now counts as built once it has tested itself (`src/search.rs`). With the fix the p99 is 2.1–2.7 ms and the index takes 6.8 s instead of 5.2 s: the wait now includes the test.
@@ -408,7 +421,7 @@ The first edition's table: one run, the five systems one after another on a load
 
 **Losses and caveats:**
 - **Unfiltered search at 1M** trades 0.7 points of recall for its speed: the graph's default beam is at most 400 now (it was 1,024 on this data). `SET hnsw.ef_search = 1000` gives back about 99.4% of the true top 10 (a beam of 1,024 found 99.4%, `examples/walk.rs`).
-- **Memory:** at 1M the Chronos server holds 7.7 GB after the run, against 6 GB of raw vectors (every vector is kept at full precision in memory for rescoring), and peaks at 9.0 GB while it builds the index; at 76k, 2.3 GB at its peak.
+- **Memory:** at 1M the Chronos server holds 3.1 GB after the run, against 6 GB of raw vectors, and peaks at 7.7 GB while it builds the index ("Memory at 1M" below); at 76k, 2.3 GB at its peak (that column keeps floats: it's under the 64M-number limit).
 - **The 76k runs weren't rerun** after the 1M changes; they may be faster now (smaller leaves for wide rows), not slower.
 - **Loading:** LanceDB takes an Arrow table in its own process (1.0 s at 76k, 12 s at 1M); Chronos gets rows over the Postgres protocol, in binary (4.7 s, 64 s).
 - **In-process vs over the network:** LanceDB and Chroma answer in the benchmark's own process; the others over TCP (Chronos, Postgres) or HTTP and gRPC.
