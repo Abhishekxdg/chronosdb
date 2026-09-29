@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**Underscores in numbers**
+- `1_000`, `1_000.000_5` and `1e1_0` read as one number, as in Postgres 16+. `1_000` was read as `1 AS _000`: the query succeeded with the wrong value. A trailing or doubled underscore (`1_`, `1__0`) is now a syntax error, not an alias.
+
 **`SELECT ... FOR UPDATE` in transactions, and `SERIALIZABLE` refused instead of ignored**
 - `SELECT ... FOR UPDATE` / `NO KEY UPDATE` / `SHARE` / `KEY SHARE`, with `OF` and `NOWAIT`, lock the rows they read until the transaction commits. The commit fails with 40001 if another commit changed one of those rows, or locked one `FOR UPDATE`, since the transaction began. Of two transactions that each lock a unit, find it free and hold it, one commits and the other fails and retries, where before both holds committed. Locks work in PL/pgSQL and SQL functions too. They were a syntax error before. `SKIP LOCKED` is 0A000.
 - `BEGIN` / `START TRANSACTION` / `SET TRANSACTION` / `SET SESSION CHARACTERISTICS` with `ISOLATION LEVEL SERIALIZABLE`, and `SET default_transaction_isolation = 'serializable'`, fail with 0A000. They were accepted and silently gave snapshot isolation, which lets write skew through.
