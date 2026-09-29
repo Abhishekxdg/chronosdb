@@ -152,7 +152,7 @@ datasource db {
 }
 ```
 
-Watch out for: `SHOW` of Postgres settings (only [Chronos's own](#known-gaps) are known), `SELECT ... FOR UPDATE` (fails the later `COMMIT` rather than waiting, see [Differences that bite](#differences-that-bite)), advisory locks, `CREATE EXTENSION` other than `vector` and `postgis`, and `pg_get_serial_sequence` (returns NULL).
+Watch out for: `SHOW` of Postgres settings (only [Chronos's own](#known-gaps) are known), `SELECT ... FOR UPDATE` (fails the later `COMMIT` rather than waiting, see [Differences that bite](#differences-that-bite)), shared advisory locks, `CREATE EXTENSION` other than `vector` and `postgis`, and `pg_get_serial_sequence` (returns NULL).
 
 ### Node: `pg` (node-postgres)
 
@@ -236,7 +236,7 @@ Each is an error (0A000 for known features, 42601 for statements Chronos doesn't
 - **Types:** no `bytea`, composite, domain or range types, no `time with time zone`, `money`, `inet` or `xml`. Some types are stored as others and reach clients that way: `uuid`, `varchar(n)` and `char` as `text` (oid 25, so drivers return strings, not UUID objects), `smallint` as `integer`, `real` as `double precision`, `json` as `jsonb`, enums and PostGIS types as `text`.
 - **`SHOW`:** only `search_path`, `statement_timeout`, `synchronous_commit`, `history_retention`, `max_worlds`, `world_idle_ttl` and Chronos's own `SHOW` statements. `SHOW server_version`, `SHOW transaction_isolation` and other Postgres settings are 42601.
 - **`SET`:** `search_path`, `statement_timeout`, `TIME ZONE` / `TimeZone` and `hnsw.ef_search` take effect. `SERIALIZABLE`, asked for in `SET TRANSACTION`, `SET SESSION CHARACTERISTICS` or `SET default_transaction_isolation`, is 0A000. Every other `SET` (`application_name`, `TRANSACTION ISOLATION LEVEL READ COMMITTED`, ...) is accepted and ignored.
-- **Functions:** no `version()`, `current_user`, `session_user`, `pg_backend_pid()` or advisory locks. `pg_get_serial_sequence`, `obj_description` and `col_description` return NULL.
+- **Functions:** no `version()`, `current_user`, `session_user` or `pg_backend_pid()`, and no shared advisory locks (`pg_advisory_lock_shared` and the like, 0A000). `pg_get_serial_sequence`, `obj_description` and `col_description` return NULL.
 - **Extensions:** `CREATE EXTENSION` accepts only `vector` and `postgis` (both built in). Others, `uuid-ossp`, `pgcrypto` and `pg_trgm` among them, are 0A000. `gen_random_uuid()` and `uuid_generate_v4()` are built in.
 - **Catalog:** only the tables listed in [the catalog](sql.md#the-catalog-information_schema-and-pg_catalog). No `pg_enum`, `pg_proc`, `pg_roles`, `pg_settings`, `pg_stat_*` or `pg_relation_size`. `pg_database` is answered only for psql's `\l`. `NOT NULL` constraints aren't rows of `table_constraints`, and `pg_opclass` and `pg_description` are empty.
 - **Indexes:** no hash indexes, GIN only on a tsvector, GiST only on a point column, no index on a whole `jsonb` column, no `ON CONFLICT (expression)`.

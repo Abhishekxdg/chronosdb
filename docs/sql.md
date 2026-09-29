@@ -609,6 +609,15 @@ They're kept in the folder across restarts, as `synchronous_commit` is. Past `ma
 - **Not allowed inside a transaction:** branch statements.
 - **Ending without COMMIT:** a transaction still open when its connection or HTTP request ends is rolled back.
 
+## Advisory locks
+
+Locks on numbers the application picks, as in Postgres: `pg_advisory_lock(key)`, `pg_advisory_xact_lock(key)`, `pg_try_advisory_lock(key)`, `pg_try_advisory_xact_lock(key)`, `pg_advisory_unlock(key)` and `pg_advisory_unlock_all()`, with one `bigint` key or two `integer` keys (a separate set of locks). `hashtext(text)` gives Postgres's own hash, so `pg_advisory_xact_lock(hashtext('setup:' || org_id))` locks the same key it would there.
+
+- **Who holds them:** a session lock until `pg_advisory_unlock` or the session ends; a transaction lock (`_xact_`) until `COMMIT` or `ROLLBACK`, or, outside a transaction, until the statement ends. A session can take its own lock again, and unlocks as many times as it took it.
+- **Waiting:** a lock another session holds waits, for as long as the statement may run (`statement_timeout`, a cancel: 57014). Sessions that would wait on each other in a cycle fail at once with 40P01. The `try` kinds return false instead of waiting. Only a statement that writes nothing waits; one that writes (an `INSERT ... SELECT` that takes a lock) fails with 55P03 when another session holds it, so take locks in a `SELECT` of their own.
+- **What a transaction sees after the wait:** a transaction reads the database as it was at `BEGIN`, so after waiting for a lock that another transaction released at its `COMMIT`, it wouldn't see what that one committed. So it reads the database anew from the next statement on, as Postgres's `READ COMMITTED` would. One that already wrote (or is inside a savepoint) can't, and fails with 40001: take advisory locks before writing.
+- **Not supported:** shared locks (`pg_advisory_lock_shared` and the others ending in `_shared`): 0A000.
+
 ## Stopping a statement
 
 - **`SET statement_timeout = 5000`** (ms, or a string like `'5s'`, `'500ms'`, `'1min'`) stops any statement of this session that runs longer, with SQLSTATE 57014, as Postgres does. `0` turns it off; `RESET statement_timeout` (or `DEFAULT`) goes back to the database's (`ALTER SYSTEM SET statement_timeout`, none unless set); `SHOW statement_timeout` shows it.
@@ -683,7 +692,7 @@ What Chronos runs, parsed when the function is made; anything else is refused th
 - **Triggers:** `NEW` and `OLD` (NULL where there is none, as `OLD` in an `INSERT`), `TG_OP`, `TG_NAME`, `TG_WHEN`, `TG_LEVEL`, `TG_TABLE_NAME`, `TG_RELNAME`, `TG_TABLE_SCHEMA` (`public`), `TG_NARGS` and `TG_ARGV[i]` (from 0). `RETURN NEW`, `RETURN OLD`, another record, or `RETURN NULL`.
 - **Ends:** a function reaching `END` without `RETURN` is 2F005, except one returning `void` or a set.
 - **Statement timeouts:** `SET statement_timeout` and cancel requests stop a looping function (loops check, as scans do).
-- **Not yet:** cursors (`OPEN`, `FETCH`, `FOR ... IN cursor`), `FOREACH`, labels, `%TYPE` / `%ROWTYPE`, `ALIAS`, `OUT` / `INOUT` / `VARIADIC` parameters and defaults, `RETURNS record`, a whole record in an expression (`NEW IS DISTINCT FROM OLD`: compare fields), array element assignment, `GET DIAGNOSTICS ... PG_CONTEXT`, transaction control, DDL inside a function (`EXECUTE` included), and taking back a temporary table's changes when a handler catches an error (as with `ROLLBACK TO`).
+- **Not yet:** cursors (`OPEN`, `FETCH`, `FOR ... IN cursor`), `FOREACH`, labels, `%TYPE` / `%ROWTYPE`, `ALIAS`, `OUT` / `INOUT` / `VARIADIC` parameters and defaults, `RETURNS record`, a whole record in an expression (`NEW IS DISTINCT FROM OLD`: compare fields, `NEW.amount IS DISTINCT FROM OLD.amount`), array element assignment, `GET DIAGNOSTICS ... PG_CONTEXT`, transaction control, DDL inside a function (`EXECUTE` included), and taking back a temporary table's changes when a handler catches an error (as with `ROLLBACK TO`).
 
 ## Indexes
 
