@@ -137,13 +137,17 @@ select date_trunc('month', at) as m, count(*) from events group by m order by m;
 select day + 7, extract(dow from day), at - '2024-01-01'::timestamptz from events;
 ```
 
-- **Time zone:** timestamps are stored in UTC, and the session zone is always UTC.
+- **Time zone:** `timestamptz` is stored as a moment (UTC). A session shows it in its time zone, UTC until it sets another:
+  - `SET TIME ZONE 'Asia/Kolkata'` (also `SET timezone = ...`, `SET TIME ZONE INTERVAL '+05:30' HOUR TO MINUTE`, `SET TIME ZONE 5.5`, `LOCAL` / `DEFAULT` / `RESET timezone` for UTC; `SHOW timezone`). `SET LOCAL TIME ZONE` lasts until the transaction ends. A Postgres client can set it at connect, as the `TimeZone` parameter or in `options=-c TimeZone=...`.
+  - In that zone: `timestamptz` prints with its offset (`2026-09-29 10:30:00+05:30`), text without a zone is read as its time, `current_date`, `localtimestamp` and `current_time` are its date and time, casts between `timestamptz` and `date`, `timestamp` or `time` convert through it, a `date` compared with a `timestamptz` is its midnight, and `date_trunc`, `extract` (not `epoch`) and `to_char` work in its clock.
+  - Only zones with one offset all year: UTC, fixed offsets, `Etc/GMT±n`, and IANA zones such as `Asia/Kolkata`, `Asia/Dubai`, `Asia/Singapore`, `Asia/Tokyo`, `America/Sao_Paulo` (the zone's current offset, for every date). A zone with daylight saving time (`America/New_York`, `Europe/London`) fails with 22023, and so does a connection that asks for one: set its offset instead. A string offset is POSIX, as in Postgres: `'UTC+5'` and `'+05'` are five hours *west* of UTC; a number or `INTERVAL` is east.
+  - `AS OF '2026-09-20 10:00'` and world names like `main@2026-09-20 10:00` read the time as UTC unless it says otherwise.
 - **Values:** `date '2024-03-10'`, `timestamp '...'` and `interval '1 day 02:00'` literals, or plain text where a date is expected, and `now()`, `current_date` and `current_timestamp`.
 - **Arithmetic:** timestamp ± interval (months by the calendar: Jan 31 + 1 month is the end of February), timestamp − timestamp, date ± days, and date − date.
 - **Functions:** `date_trunc(unit, …)`, `extract(field from …)` and `date_part(field, …)`.
 - **Times of day:** `time` (`time without time zone`), e.g. `'09:30'`, `time '17:00:00.5'`, `localtime`.
   - time ± interval moves the clock and wraps past midnight, time − time is an interval, date + time is a timestamp, `ts::time` takes a timestamp's time of day, and `extract(hour | minute | second from t)` works.
-  - `current_time` is the time now in UTC, with no zone. There's no `time with time zone`: use `timestamptz`.
+  - `current_time` is the time now in the session's zone, with no zone of its own. There's no `time with time zone`: use `timestamptz`.
 - **Outside SQL:** JSON shows ISO 8601.
 
 ## Changing tables
