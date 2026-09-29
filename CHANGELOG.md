@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**`SELECT ... FOR UPDATE` in transactions, and `SERIALIZABLE` refused instead of ignored**
+- `SELECT ... FOR UPDATE` / `NO KEY UPDATE` / `SHARE` / `KEY SHARE`, with `OF` and `NOWAIT`, lock the rows they read until the transaction commits. The commit fails with 40001 if another commit changed one of those rows, or locked one `FOR UPDATE`, since the transaction began. Of two transactions that each lock a unit, find it free and hold it, one commits and the other fails and retries, where before both holds committed. Locks work in PL/pgSQL and SQL functions too. They were a syntax error before. `SKIP LOCKED` is 0A000.
+- `BEGIN` / `START TRANSACTION` / `SET TRANSACTION` / `SET SESSION CHARACTERISTICS` with `ISOLATION LEVEL SERIALIZABLE`, and `SET default_transaction_isolation = 'serializable'`, fail with 0A000. They were accepted and silently gave snapshot isolation, which lets write skew through.
+
 **Vector columns of 1M rows in 60% less memory, with the same answers**
 - A vector column keeps its numbers as floats while it holds at most 64M of them (256 MB), and at 8 bits a number above that, each vector with its own scale: at 1M real embeddings (1,536 dimensions) the server holds 3.1 GB after the run, from 7.7 GB, and peaks at 7.7 GB building the index, from 9.1 GB. The index builds 2.3 times faster (58.7 s, from 133.5 s).
 - 8-bit numbers alone can't tell near-duplicates apart (94% of the true top 10 at 1M), so such an index proposes twice the rows asked for and ranks them from the rows' own vectors, read on the free cores: 1.34 ms at 98.6% recall@10, against 1.32 ms at 98.7% with floats; one user 1.19 ms at 100%. SQL and `find` (HTTP, MCP) both rank that way, and their scores stay exact.
