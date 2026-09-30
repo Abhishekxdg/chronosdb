@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+**`ANY(ARRAY[...]::type[])`**
+- `x = ANY(ARRAY[$1, $2]::text[])` (how most ORMs bind an IN list), and other `ARRAY[...]` with something after the `]` (`::type[]`, a subscript), inside `ANY`/`SOME`/`ALL` were a syntax error at `::`. They now work.
+
+**Parameters inside WITH queries are counted**
+- `with a as (select $1::int as x) select x from a` failed over the Postgres protocol with 08P01 "1 parameters given, but the statement takes 0": a `$n` only in a WITH query, a derived table (`FROM (select ...)`), a `WITH RECURSIVE` part or a function's arguments in FROM (`generate_series(1, $1)`) was not counted, and its type was not guessed from use. Both now cover the whole statement.
+
+**Quoted function names, and a lost unique index fails the import**
+- `"right"('abc', 2)` and `create unique index u on t (org_id, "right"(x, 10))` were a syntax error at `(`. A quoted, already lowercase name before `(` is the function of that name, as pg_dump and `pg_get_indexdef` write it. Other quoted names stay columns.
+- `chronos import postgres://...` listed a unique index it could not create under "not imported" and still exited 0, leaving a table that accepts rows Postgres refused. It now ends with an error naming those indexes (exit 1), after the rest of the import is done and reported.
+
+**`avg` of integers is numeric, and `pg_typeof`**
+- `avg(int)` and `avg(bigint)` now return `numeric` (exact, with Postgres's scale: `6.2297297297297297`, `10.0000000000000000`), as Postgres does, where they returned `double precision`. Drivers such as node-postgres get a string, not a rounded JS number. `avg` of floats is still `double precision`; `avg` of numeric was already numeric. Applies to grouped and window averages.
+- `pg_typeof(x)` returns the type's name (`integer`, `numeric`, `double precision`, `timestamp with time zone`, ...).
+
+**`array_agg` is an array, and output columns have Postgres's names**
+- `array_agg(x)` reports an array of x's type (`text[]`, `integer[]`, ...) instead of `text`, so node-postgres and other drivers return a real array, not the string `{a,b}`.
+- An unnamed `array_agg`, `string_agg`, `json_agg`, `bool_and` or `bool_or` column is named `array_agg`, `string_agg`, `jsonb_agg`, `bool_and`, `bool_or`, where it was named with internal plan text.
+- `select id::text from t` names its column `id` (was `?column?`), so a driver that maps rows by name finds it. A cast takes its operand's name (`u.code::text` is `code`, `now()::date` is `now`), a cast of a constant its type's (`1::int` is `int4`), and `CASE`, `EXISTS(...)` and `ARRAY[...]` are `case`, `exists` and `array`, as in Postgres. A query that sorts by such a name (`select j::text ... order by j`) now sorts by that output column, as Postgres does.
+
+**Constraint violations name what they broke**
+- The ErrorResponse of a unique (23505), NOT NULL (23502), CHECK (23514) or foreign-key (23503) violation now carries `constraint`, `table`, `schema` and, for NOT NULL, `column`, and `detail` where Postgres words one (`Key (k)=(a) already exists.`, `Key (q)=(99) is not present in table "q".`, `Key (id)=(1) is still referenced from table "kid".`). Apps that branch on `err.constraint` now match. The message text is unchanged for now.
+
+**A foreign key keeps `ON DELETE RESTRICT`**
+- `information_schema.referential_constraints.delete_rule`, `pg_constraint.confdeltype` and `pg_get_constraintdef` reported `ON DELETE RESTRICT` as `NO ACTION`, so schema diff tools saw a change on every run after `chronos import`. RESTRICT is now kept apart from NO ACTION, the default. Both refuse the delete, as before. Foreign keys made before this release keep reading as NO ACTION. `ON UPDATE` actions still all read as NO ACTION.
+
+**`varchar(n)` and `char(n)` limits are enforced**
+- A value longer than `n` characters written to a `varchar(n)`, `char(n)` or `character varying(n)` column fails with 22001 (`value too long for type character varying (4)`), on INSERT and UPDATE; blanks past the limit are cut, as in Postgres. Before, the limit was accepted and ignored, so a database moved with `chronos import` lost every length rule its schema had. A bare `char` is `char(1)`.
+- `'abcdefgh'::varchar(4)` and `CAST(... AS character varying(4))` cut to `abcd`.
+- Not yet: `char(n)` values are not blank-padded, `information_schema.columns` still reports these columns as `text` without `character_maximum_length`, and tables made before this release have no limit until the column is declared again.
+
 **Underscores in numbers**
 - `1_000`, `1_000.000_5` and `1e1_0` read as one number, as in Postgres 16+. `1_000` was read as `1 AS _000`: the query succeeded with the wrong value. A trailing or doubled underscore (`1_`, `1__0`) is now a syntax error, not an alias.
 
