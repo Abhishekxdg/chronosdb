@@ -8,7 +8,7 @@ The SQLSTATE codes Chronos returns, and how an error reaches each kind of client
 
 | Client | What it gets |
 |---|---|
-| Postgres protocol | an `ErrorResponse` with four fields: `S` and `V` (`ERROR`), `C` (the SQLSTATE) and `M` (the message). No detail, hint or position fields. Notices (`RAISE NOTICE`, `... already exists, skipping`) come as `NoticeResponse` with the same fields |
+| Postgres protocol | an `ErrorResponse` with `S` and `V` (`ERROR`), `C` (the SQLSTATE), `M` (the message) and, where the error has them, `D` (detail), `H` (hint), `P` (position: a syntax error's place in the query, counted in characters from 1) and `s`, `t`, `c`, `n` (the schema, table, column and constraint a violation names). `W` (where) is never sent. Notices (`RAISE NOTICE`, `... already exists, skipping`) come as `NoticeResponse` with the same fields |
 | HTTP API | a status code and a JSON body with `error` (see [below](#http)) |
 | MCP | a failed tool call is a normal JSON-RPC result with `isError: true` and the message as its text content; no SQLSTATE (see [below](#mcp)) |
 | Shell | `error: <message>` on stderr, no SQLSTATE; a one-shot command or script exits 1 (see [CLI](cli.md)) |
