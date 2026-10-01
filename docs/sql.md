@@ -106,12 +106,12 @@ alter table posts add constraint posts_author_fkey foreign key (author) referenc
 
 - **When they're checked:** at every statement, and again at every merge, including a transaction's `COMMIT`. Two branches can each be valid and still clash together: the same email on both, or one side deleting a row the other side's new row references. The merge then fails with 23505 or 23503, merges nothing, and says which rows clash. That holds even when you force a side with `USING OURS` / `THEIRS`.
 - **How they're stored:** each unique value and each reference is a small index row, so a check is one lookup (about 1 µs), not a scan. Those rows don't show in `DIFF`.
-- **Changing them:** `ALTER TABLE ... ADD CONSTRAINT` checks existing rows first. `DROP CONSTRAINT` removes one. Constraints follow renamed tables and columns, and a table others reference can't be dropped.
+- **Changing them:** `ALTER TABLE ... ADD CONSTRAINT` checks existing rows first. `DROP CONSTRAINT` removes one, and `DROP COLUMN` and `DROP CONSTRAINT` take `CASCADE` (the foreign keys that reference what goes are dropped too, with a NOTICE; without it they are refused with 2BP01). Constraints follow renamed tables and columns, and a table others reference can't be dropped.
 - **Several columns:** `FOREIGN KEY (a, b) REFERENCES t` references a primary key of several columns (naming its columns in any order), with `MATCH SIMPLE`'s rule: a row with a null among them references nothing.
 - **Deferrable foreign keys:** `DEFERRABLE`, `NOT DEFERRABLE`, `INITIALLY DEFERRED` (which implies `DEFERRABLE`) and `INITIALLY IMMEDIATE` on `REFERENCES` and `FOREIGN KEY`, as Django writes on every foreign key. In a transaction, a deferred key isn't checked when its row is written (or its parent deleted) but when the transaction ends, so children can come before parents; a row that fails then fails the `COMMIT` (23503) and the transaction is rolled back. `SET CONSTRAINTS ALL | name, ... DEFERRED | IMMEDIATE` changes that for the rest of the transaction (`IMMEDIATE` checks what was put off at once), and `ALTER TABLE ... ALTER CONSTRAINT name [NOT] DEFERRABLE [INITIALLY DEFERRED | IMMEDIATE]` changes it for good. Outside a transaction a statement is its own commit, so nothing is put off. `RESTRICT` is checked at once, and `CASCADE`, `SET NULL` and `SET DEFAULT` act at once, as in Postgres. Unique and primary keys can't be deferred (0A000).
 - **Actions:** `ON DELETE` and `ON UPDATE` each take `NO ACTION` (the default), `RESTRICT`, `CASCADE`, `SET NULL` and `SET DEFAULT`. Changing the primary key of a row others reference (`UPDATE p SET id = 5`) is refused (23503) unless `ON UPDATE` says otherwise: `CASCADE` gives the referencing rows the new key (a reference that is part of their own key moves them, and their children in turn), `SET NULL` and `SET DEFAULT` set the reference to null or to its column's default (which must then be a row of the parent, or the statement fails with 23503). An update that leaves the key as it was never touches the referencing rows. `SET NULL` can't apply to a primary key column (42601), and a table with row triggers can't be the target of an acting `ON UPDATE` or `ON DELETE` (0A000).
 - **To a UNIQUE column:** `REFERENCES t (col)` and `FOREIGN KEY (a, b) REFERENCES t (x, y)` may name a `UNIQUE` constraint's columns (or a plain unique index's, in any order) as well as the primary key's; a partial or expression unique index can't be referenced (42830, as in Postgres). The referencing row's values are looked up by the unique entry, a change of the referenced value acts as `ON UPDATE` says, and a merge that leaves a row pointing at a value the other world deleted fails with 23503. The unique constraint or index, and its columns, can't be dropped while a foreign key uses it (2BP01), and its type can't change except between `integer` and `bigint` (0A000).
-- **Not yet:** `MATCH FULL`.
+- **Not yet:** `MATCH PARTIAL` (0A000). `MATCH FULL` works.
 - **JSON writes too:** agents' `put`, `delete` and `batch` (shell, HTTP, MCP, Rust) on a SQL table are checked like an `INSERT`. See [JSON writes into SQL tables](#json-writes-into-sql-tables).
 
 ## JSON writes into SQL tables
@@ -312,7 +312,7 @@ select p.name from products p join picks using (id) order by score limit 10;
 
 - **The session's own:** `CREATE TEMP` (or `TEMPORARY`) `TABLE` makes a table only this connection sees, in memory: it's never written to the log, never in a `DIFF`, never merged, and it's gone when the connection ends (or `DROP TABLE`). A temporary table hides a world's table of the same name, as in Postgres.
 - **With everything else:** it can be read alongside the world's tables (joins, subqueries, `INSERT INTO world_table SELECT ... FROM temp_table`), and filled from them (`INSERT INTO temp_table SELECT ... FROM world_table`), with the usual constraints, defaults and indexes. `BEGIN ... ROLLBACK` takes back its changes too.
-- **Not yet:** `ON COMMIT DROP` / `DELETE ROWS` (0A000; `PRESERVE ROWS` is what it does), savepoints (`ROLLBACK TO` leaves a temporary table's changes), subqueries on the world's tables inside an `UPDATE` or `DELETE` of a temporary table, foreign keys between temporary and other tables, and psql's `\d` for them.
+- **Not yet:** savepoints (`ROLLBACK TO` leaves a temporary table's changes), subqueries on the world's tables inside an `UPDATE` or `DELETE` of a temporary table, foreign keys between temporary and other tables, and psql's `\d` for them.
 
 ## Prepared statements
 
@@ -1000,12 +1000,12 @@ Every write to a SQL table, SQL or JSON, stores the column's type, so index look
 
 ## Not yet
 
-- **Functions:** `to_char`'s `EEEE`, `RN`, `TH` and `V` number patterns, and regular expression lookaround, among others.
-- **COPY:** the binary format, `COPY ... FROM ... WHERE`, and files or programs on the server (refused on purpose; use psql's `\copy`).
-- **Types and schemas:** composite and domain types, and schemas' owners and privileges.
-- **Temporary tables:** `ON COMMIT DROP` / `DELETE ROWS` and savepoints (see [Temporary tables](#temporary-tables)).
+- **Functions:** `to_char`'s `EEEE`, `RN`, `TH` and `V` number patterns, among others.
+- **COPY:** the binary format for `COPY ... TO` (`FROM` works), `COPY ... FROM ... WHERE`, and files or programs on the server (refused on purpose; use psql's `\copy`).
+- **Types and schemas:** composite and range types, and schemas' owners and privileges (domains work).
+- **Temporary tables:** savepoints (see [Temporary tables](#temporary-tables)).
 - **User-defined functions and triggers:** the parts of `CREATE FUNCTION`, PL/pgSQL and `CREATE TRIGGER` listed as not yet under [Functions and triggers](#functions-and-triggers), and other languages than `sql` and `plpgsql`.
-- **Views:** `WITH CHECK OPTION`, `ON CONFLICT` through a view, `ALTER VIEW ... RENAME COLUMN`, and renaming a table or view another view reads.
+- **Views:** `WITH CHECK OPTION` on views that aren't automatically updatable, `ON CONFLICT` through a view, `ALTER VIEW ... RENAME COLUMN`, and renaming a table or view another view reads.
 - **Catalog:** `pg_enum`, `pg_proc` and other catalog tables not listed under [the catalog](#the-catalog-information_schema-and-pg_catalog).
 
 Each gives a clear error rather than a wrong answer.

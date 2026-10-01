@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**Rails and Django connect and migrate (found by running the real ActiveRecord 8.1 and SQLAlchemy 2.1)**
+- `SET IntervalStyle` takes `postgres`, `postgres_verbose`, `sql_standard` and `iso_8601` and writes intervals in each (`P1Y2M3DT4H5M6.5S`, `+1-2 +3 +4:05:06.5`, `@ 1 day 2 hours ago`), per session, in text and JSON; Rails sends `iso_8601` on every connection, and was refused (0A000). Compared with Postgres 16 on 14 intervals in all four styles.
+- A derived table inside a subquery that reads the outer query's columns (`(select array_agg(x) from (select t.a[i] x from generate_subscripts(t.a, 1) i) q)`) was "missing FROM-clause entry for table"; Rails' foreign-key reflection is written that way, so `foreign_keys(table)` failed.
+- `ALTER TABLE ... DROP COLUMN x CASCADE` and `DROP CONSTRAINT x CASCADE` (Django writes both) drop the foreign keys, on any table, that reference what goes, with Postgres's NOTICE; without `CASCADE` they stay refused (2BP01).
+- `pgdiff` fails instead of skipping when `CHRONOS_REQUIRE_ORACLE` is set and there is no Postgres, so a dead oracle can't read as a pass.
+- Gap probe against Postgres 16.13: 12 gaps on the first fixture (was 101), 1 on the ORM fixture (was 34). The "known gaps" lists in the docs no longer name features that work (domains, `MATCH FULL`, `ON COMMIT DROP`, `WITH CHECK OPTION`, `WITH TIES`, regex lookaround, binary `COPY FROM`).
+
 **Table inheritance and declarative partitioning**
 - `CREATE TABLE child (...) INHERITS (a, b)` with Postgres's column merging (same name and type merge, a clash of types is 42804, a clash of defaults 42622), inherited and local checks and `NOT NULL`, `ALTER TABLE ... INHERIT` / `NO INHERIT`, `ADD`/`DROP COLUMN` carried down (and refused on an inherited column, 42P16), `SELECT`/`UPDATE`/`DELETE` that reach the children and `ONLY` that does not, `tableoid`, and `pg_inherits`.
 - `PARTITION BY RANGE | LIST | HASH` on columns or expressions, `PARTITION OF ... FOR VALUES FROM .. TO | IN | WITH (MODULUS, REMAINDER) | DEFAULT` (`MINVALUE`/`MAXVALUE`), and sub-partitioning. Rows route to their partition on `INSERT`, `INSERT ... SELECT`, `COPY` and `ON CONFLICT`; a row with no partition is 23514 "no partition of relation ... found for row". Hash partitions place rows exactly where Postgres does. An `UPDATE` that changes the key moves the row. Overlapping bounds are 42P17.
