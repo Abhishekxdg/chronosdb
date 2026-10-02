@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**pg_cursors and pg_prepared_statements: the text a driver sent**
+- A cursor `DECLARE`d (or a statement `PREPARE`d) through the extended protocol, as psycopg and other drivers do, showed in `pg_cursors.statement` (`pg_prepared_statements.statement`) the last simple query the connection ran, such as `START TRANSACTION`, instead of its own text. They now show the text of the protocol's Parse, as Postgres does (`tests/cursors.rs` `the_views_show_the_text_a_driver_sent_through_the_extended_protocol`).
+
+**pg_locks: who holds each advisory lock**
+- `pg_locks` showed a `pid` only for the querying session's own locks, so monitoring couldn't join it to `pg_stat_activity` to see who blocks whom. Every lock held or waited for by a connection now has that connection's `pid`, as in Postgres. A program that opens several databases in one process also saw the other databases' advisory locks in each one's `pg_locks`; it now sees only its own (`tests/sysinfo.rs` `pg_locks_shows_every_holders_and_waiters_pid`, `tests/advisory.rs` `pg_locks_shows_only_its_own_databases_locks`).
+
 **serial in a transaction that drops and recreates its table (SQLAlchemy and Django test setups)**
 - A table with a `serial` column dropped and made again inside one transaction kept counting from the old counter (ids 3, 4 where Postgres gives 1, 2), and so did `TRUNCATE ... RESTART IDENTITY` in a transaction: the restart waited for COMMIT and `nextval` didn't see it. Such a transaction now numbers its rows from the start, the counter moves past them at COMMIT, ROLLBACK leaves the old counter, and ROLLBACK TO a savepoint takes back a restart made after it, as in Postgres (`tests/pgdiff.rs` `serial_counters_restarted_in_a_transaction`).
 
