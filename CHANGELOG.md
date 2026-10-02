@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**serial in a transaction that drops and recreates its table (SQLAlchemy and Django test setups)**
+- A table with a `serial` column dropped and made again inside one transaction kept counting from the old counter (ids 3, 4 where Postgres gives 1, 2), and so did `TRUNCATE ... RESTART IDENTITY` in a transaction: the restart waited for COMMIT and `nextval` didn't see it. Such a transaction now numbers its rows from the start, the counter moves past them at COMMIT, ROLLBACK leaves the old counter, and ROLLBACK TO a savepoint takes back a restart made after it, as in Postgres (`tests/pgdiff.rs` `serial_counters_restarted_in_a_transaction`).
+
 **Parallel pg_dump (`pg_dump -Fd -j N`): `pg_export_snapshot()` and `SET TRANSACTION SNAPSHOT`**
 - `pg_dump -j` failed: its workers read the leader's snapshot. `pg_export_snapshot()` gives an id for what the calling transaction reads, and `SET TRANSACTION SNAPSHOT 'id'` as the first statement of another session's transaction makes it read exactly that (rows committed before the exporter began, not the exporter's own writes) until the exporting transaction ends. Postgres's errors: outside a transaction 25P01, after a query 25001, an unknown or ended snapshot 22023. Such a transaction only reads in Chronos (a write is 25006) and its COMMIT changes nothing; it is brought to the snapshot by logged writes to its own fork, so a restart replays to the same database. A real `pg_dump -Fd -j 3` of Chronos restores into Postgres 16 complete (`tests/snapshot.rs`).
 
