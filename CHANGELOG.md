@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**pg_prepared_statements and pg_cursors through a view or a function; views and the catalog in function bodies**
+- `pg_prepared_statements` and `pg_cursors` read through a view (`create view v as select * from pg_prepared_statements`) were empty: the session's statements and cursors were handed only to a statement naming either view itself. Every statement now reaches them however it reads them, at no cost to one that doesn't. A cursor's own query now sees it in `pg_cursors`, as in Postgres.
+- A `LANGUAGE sql` function's statements, and a PL/pgSQL function's (`RETURN QUERY`, `PERFORM`, `SELECT ... INTO`, `INSERT`, ...), failed with 42P01 on a view, a sequence read as a table, or a catalog table (`pg_class`, `information_schema.tables`, `pg_prepared_statements`). They now read them as a statement of its own does, as they are each time they run (`tests/pgdiff.rs` `prepared_statements_and_cursors_through_views_and_functions`, `function_bodies_read_views_sequences_and_the_catalog`). An expression's subquery in PL/pgSQL (`RETURN (SELECT ... FROM a_view)`) still fails on them.
+- In such a body, a column of a view, a sequence or a catalog table the statement reads was taken for an argument or a PL/pgSQL variable of the same name: `update a_view set v = v + 1` in a function with an argument `v` wrote the argument's value plus one, and `where name = 'p'` over `pg_prepared_statements` compared the argument. The column now wins over a SQL function's argument, and is ambiguous with a PL/pgSQL variable (42702), as for a table's (`tests/pgdiff.rs` `function_arguments_named_like_columns_of_views_and_the_catalog`).
+
 **pg_cursors and pg_prepared_statements: the text a driver sent**
 - A cursor `DECLARE`d (or a statement `PREPARE`d) through the extended protocol, as psycopg and other drivers do, showed in `pg_cursors.statement` (`pg_prepared_statements.statement`) the last simple query the connection ran, such as `START TRANSACTION`, instead of its own text. They now show the text of the protocol's Parse, as Postgres does (`tests/cursors.rs` `the_views_show_the_text_a_driver_sent_through_the_extended_protocol`).
 
