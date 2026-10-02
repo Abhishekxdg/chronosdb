@@ -10,6 +10,9 @@
 - `pg_get_keywords()` (`getSQLKeywords`): Postgres 16's 471 keywords, taken from a real Postgres 16.
 - The statements are in `tests/pgdiff.rs` as pgjdbc writes them, compared with Postgres 16 (`pgjdbc_metadata_queries`, `record_fields`); a full pgjdbc run of 33 metadata and data calls now passes, with the same answers as Postgres for everything but `getTypeInfo` (52 types, Postgres has 410), `getUDTs`, the grantee name and the default isolation level.
 
+**ALTER TABLE ... RENAME CONSTRAINT (CHECK)**
+- `ALTER TABLE t RENAME CONSTRAINT a TO b` was a syntax error. A CHECK constraint is renamed, with Postgres's behaviour: the new name in the violation error and `pg_constraint`, its `COMMENT ON CONSTRAINT`, a column rename after it, an inheriting child's copy (renaming on the child alone is 42P16), 42704 for a missing name and 42710 for a taken one (including its own). A unique, primary key or foreign key constraint is 0A000: its name is part of the rows that keep it.
+
 **Rails and Django connect and migrate (found by running the real ActiveRecord 8.1 and SQLAlchemy 2.1)**
 - `SET IntervalStyle` takes `postgres`, `postgres_verbose`, `sql_standard` and `iso_8601` and writes intervals in each (`P1Y2M3DT4H5M6.5S`, `+1-2 +3 +4:05:06.5`, `@ 1 day 2 hours ago`), per session, in text and JSON; Rails sends `iso_8601` on every connection, and was refused (0A000). Compared with Postgres 16 on 14 intervals in all four styles.
 - A derived table inside a subquery that reads the outer query's columns (`(select array_agg(x) from (select t.a[i] x from generate_subscripts(t.a, 1) i) q)`) was "missing FROM-clause entry for table"; Rails' foreign-key reflection is written that way, so `foreign_keys(table)` failed.
