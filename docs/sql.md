@@ -998,6 +998,10 @@ See [BENCHMARKS.md](https://github.com/Abhishekxdg/chronosdb/blob/main/BENCHMARK
 
 Every write to a SQL table, SQL or JSON, stores the column's type, so index lookups and scans agree.
 
+### Records
+
+A function that gives several columns, called in a select list, gives one value: a record, written as Postgres writes a row, `(10,1)`. `(expr).field` reads one of its fields (`(r).x`, `(q.r).x`, `(information_schema._pg_expandarray(i.indkey)).n`), typed as the field is; `(1).x` is 42809 (not a composite type) and a field it hasn't is 42703. Today one function gives records, `information_schema._pg_expandarray(array)`, each element as `x` and its place as `n` (JDBC drivers read an index's columns with it); `ROW(...)` values and whole rows are still text and JSON, and `(record).*` and declaring a composite type (`CREATE TYPE ... AS (...)`) are not supported. `pg_get_keywords()` lists Postgres 16's SQL keywords (word, category code, whether it can be a bare label, and descriptions), and `'array_in'::regproc` (any built-in function a catalog row names, with or without `pg_catalog.`) gives the function's name.
+
 ## Not yet
 
 - **Functions:** `to_char`'s `EEEE`, `RN`, `TH` and `V` number patterns, among others.
