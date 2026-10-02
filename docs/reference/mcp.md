@@ -50,7 +50,7 @@ Use an absolute folder path: the client picks the working directory.
 - **Protocol version:** the server answers `initialize` with the client's `protocolVersion`, or `2025-06-18` if it sends none.
 - **Capabilities:** `tools` only. No resources, no prompts.
 - **Methods:** `initialize`, `ping` (replies `{}`), `tools/list`, `tools/call`. A message without an `id` (a notification such as `notifications/initialized`) gets no reply.
-- **Server info:** `{"name": "chronos", "version": "<chronos version>"}`, plus `instructions` that teach the workflow: `describe`, `fork`, change your branch, `diff`, then `merge` or `discard`. In safe mode and for `--agent`, the instructions say a person merges with `chronos <database folder> merge <branch>`, and to report the branch name.
+- **Server info:** `{"name": "chronos", "version": "<chronos version>"}`, plus `instructions` that teach the workflow: `describe`, `fork`, change your branch, `diff`, then `merge` or `discard`. The instructions follow what the session may do. If it may not merge (safe mode, or an `--agent` without `merge` or `merge_own`), they say a person merges with `chronos <database folder> merge <branch>`, and to report the branch name. If it may merge its own branches (`--allow-merge`, or an `--agent` with `merge_own`, `merge` or `admin`), they tell it to call `merge` when its diff is right, and that a merge policy may hold the merge for a person: then it stops and reports the branch and the reasons.
 - **State:** none between calls, except the worlds a safe-mode session forked. Each `sql` call is its own session: a transaction must `BEGIN` and `COMMIT` within one call.
 
 ## Errors

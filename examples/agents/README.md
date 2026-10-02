@@ -8,7 +8,7 @@ The pattern is the same whatever the framework: every agent works on **its own f
 claude mcp add chronos -- chronos mcp /path/to/mydb
 ```
 
-The server's instructions teach the workflow: `describe`, then `fork`, then edit, then `diff`, then a person merges (or the agent calls `discard`). `merge` is offered only with `--allow-merge`. Try asking it to "Fork a branch, clean up the duplicate rows in `contacts`, show me the diff, then merge."
+The server's instructions teach the workflow: `describe`, then `fork`, then edit, then `diff`, then a person merges (or the agent calls `discard`). `merge` is offered only with `--allow-merge`, or to an agent account with the right (`--agent NAME`); the instructions then tell the agent to merge its own branch, and to stop and report if a merge policy holds it for a person. Try asking it to "Fork a branch, clean up the duplicate rows in `contacts`, show me the diff, then merge."
 
 ## Any LLM API with tool calling
 
