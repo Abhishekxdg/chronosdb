@@ -254,7 +254,7 @@ Each is an error (0A000 for known features, 42601 for statements Chronos doesn't
 
 ### Tools that work
 
-- **pg_dump** (plain scripts, `--schema-only`, `--data-only`, tables and schemas by name) reads the catalog and writes a script that restores, into Postgres and into Chronos, to the same database ([Dumping with pg_dump](sql.md#dumping-with-pg_dump)).
+- **pg_dump** (plain scripts, `--schema-only`, `--data-only`, tables and schemas by name, and the directory format in parallel, `-Fd -j N`) reads the catalog and writes a script that restores, into Postgres and into Chronos, to the same database ([Dumping with pg_dump](sql.md#dumping-with-pg_dump)). Parallel dumps rely on `pg_export_snapshot()` and `SET TRANSACTION SNAPSHOT`: a transaction that imports another's snapshot reads exactly what that one reads (rows committed before it began, not its own writes), until it ends. One difference from Postgres: such a transaction only reads (a write, `nextval` or `NOTIFY` in it is 25006, as in a READ ONLY one), and its COMMIT changes nothing.
 - **pgbench** (`-i`, the TPC-B transaction, `-S`, `-N`, in simple, extended and prepared mode) runs; with several clients on the same rows, retry with `--max-tries` ([Transactions](sql.md#transactions)).
 
 ## Chronos-only SQL

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+**Parallel pg_dump (`pg_dump -Fd -j N`): `pg_export_snapshot()` and `SET TRANSACTION SNAPSHOT`**
+- `pg_dump -j` failed: its workers read the leader's snapshot. `pg_export_snapshot()` gives an id for what the calling transaction reads, and `SET TRANSACTION SNAPSHOT 'id'` as the first statement of another session's transaction makes it read exactly that (rows committed before the exporter began, not the exporter's own writes) until the exporting transaction ends. Postgres's errors: outside a transaction 25P01, after a query 25001, an unknown or ended snapshot 22023. Such a transaction only reads in Chronos (a write is 25006) and its COMMIT changes nothing; it is brought to the snapshot by logged writes to its own fork, so a restart replays to the same database. A real `pg_dump -Fd -j 3` of Chronos restores into Postgres 16 complete (`tests/snapshot.rs`).
+
 **Monitoring views (what postgres_exporter, pgAdmin and Datadog read)**
 - The 35 statistics views of Postgres 16 that were missing (`pg_stat_wal`, `pg_stat_archiver`, `pg_stat_database_conflicts`, `pg_stat_io`, `pg_stat_ssl`, the `pg_stat_progress_*`, `pg_statio_*_indexes`, `pg_stat_xact_*` and the rest) exist with their columns. `pg_stat_bgwriter`, `pg_stat_wal`, `pg_stat_archiver` and `pg_stat_recovery_prefetch` have the one row Postgres always has (counters 0), and the index, per-transaction and conflict views have a row per index, table and world.
 - `pg_prepared_statements`, `pg_cursors` and `pg_locks` were always empty: they list the session's prepared statements (SQL `PREPARE`'s and a driver's named ones, with the query string they came in), its open cursors, and the advisory locks held and waited for. Compared with Postgres 16 in `tests/pgdiff.rs` `monitoring_views`.
