@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**Monitoring views (what postgres_exporter, pgAdmin and Datadog read)**
+- The 35 statistics views of Postgres 16 that were missing (`pg_stat_wal`, `pg_stat_archiver`, `pg_stat_database_conflicts`, `pg_stat_io`, `pg_stat_ssl`, the `pg_stat_progress_*`, `pg_statio_*_indexes`, `pg_stat_xact_*` and the rest) exist with their columns. `pg_stat_bgwriter`, `pg_stat_wal`, `pg_stat_archiver` and `pg_stat_recovery_prefetch` have the one row Postgres always has (counters 0), and the index, per-transaction and conflict views have a row per index, table and world.
+- `pg_prepared_statements`, `pg_cursors` and `pg_locks` were always empty: they list the session's prepared statements (SQL `PREPARE`'s and a driver's named ones, with the query string they came in), its open cursors, and the advisory locks held and waited for. Compared with Postgres 16 in `tests/pgdiff.rs` `monitoring_views`.
+
 **MCP instructions tell a session that may merge to merge**
 - The `instructions` the MCP server sends said "you can't merge: a person reviews your diff and merges it from a terminal" to every `--agent` session, even one with `merge_own` or `merge`, so some agents stopped at "run `chronos merge <branch>`" with the merge tool in their list. They now follow the session's rights: with `--allow-merge`, or an agent that may merge, they tell it to call `merge` when its diff is right, and that a merge policy may hold the merge for a person (then it stops and reports the branch and the reasons). Safe mode and an agent that may not merge get the same text as before.
 
