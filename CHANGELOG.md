@@ -323,6 +323,12 @@
 - A driver that sends `$1` for `pg_cancel_backend`, `pg_sleep`, `pg_advisory_lock` and `setval`'s value now gets the type Postgres gives it (integer, double precision, bigint), so strictly typed drivers can send an integer.
 - `tests/pg_gap_probe.sh` measures what's left: it runs 178 statements that drivers, ORMs and migration tools send on a real Postgres and on Chronos and counts what only Postgres accepts. The plan is in `docs/designs/postgres-parity.md`.
 
+**Correlated `EXISTS`, `NOT EXISTS` and `IN`, joins on an expression, and long `IN` lists are fast**
+- `exists (select 1 from leads l2 where l2.company = l1.company and l2.created_at > l1.created_at)` read the whole inner table again for every outer row: over a 150,600-row table with 15,000 outer rows it took 120 s (the `NOT EXISTS` form 122 s, the same predicate in a `DELETE` as long). The subquery now runs once, without the conditions that read the outer row, and each outer row looks its candidates up by the `=` (here `l2.company = l1.company`) and checks the rest on them: 0.13 s. The same goes for a correlated `IN`. Nulls, `NOT EXISTS` and `NOT IN` answer as before. A subquery with `LIMIT`, grouping, an aggregate, a nested subquery or a volatile function, or too big for `CHRONOS_WORK_MEM`, still runs per outer row; so does one comparing an indexed column or the primary key, where each lookup is cheap, until those lookups have taken half a second in all, when it is hashed after all.
+- `a join b on lower(a.email) = lower(b.email)` compared every pair of rows (15,000 x 150,600: over 20 minutes); it now hashes the expression like a join on a column does (0.14 s in a subquery of `IN`).
+- `x IN (select ...)` and `NOT IN` with 16 rows or more in the list look each value up in a hash set instead of comparing it with every row of the list (a 15,000-row list over 150,600 rows: 14 s, now 0.2 s to 0.4 s). Only when the list's values are all integers and numeric, all floats, all text, all dates or all booleans.
+
+
 **`ANY(ARRAY[...]::type[])`**
 - `x = ANY(ARRAY[$1, $2]::text[])` (how most ORMs bind an IN list), and other `ARRAY[...]` with something after the `]` (`::type[]`, a subscript), inside `ANY`/`SOME`/`ALL` were a syntax error at `::`. They now work.
 
