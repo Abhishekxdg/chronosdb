@@ -743,6 +743,29 @@ select has_table_privilege('s.orders', 'insert'), pg_has_role('readers', 'member
 - **Agents** keep their capabilities; an agent with a role of its name has that role's privileges too, and needs the `admin` capability to make or grant roles. Roles that aren't superusers can't touch worlds (fork, merge, restore, `DIFF`): give a program an agent for that.
 - **Passwords** are kept as SCRAM-SHA-256 verifiers, never in the clear (`PASSWORD 'x'`), and a role with one logs in with it: SCRAM-SHA-256, or MD5 for one kept as an md5 hash (`SET password_encryption = 'md5'`).
 
+## Row-level security
+
+Postgres's policies, on the same roles: a table with row security shows each role only the rows a policy lets it see, and takes only the rows a policy lets it write.
+
+```sql
+alter table notes enable row level security;
+create policy tenant on notes using (tenant = current_user);           -- every command, every role
+create policy org on orders using (org = current_setting('app.org_id')::int);
+create policy read_shared on notes for select to readers using (shared);
+create policy no_drafts on notes as restrictive for update using (not draft) with check (not draft);
+set app.org_id = '42';                                                  -- per session (or SET LOCAL per transaction)
+```
+
+- **Who they apply to:** every role but a superuser, a role with `BYPASSRLS`, and the table's owner (and members of the owner role), unless `ALTER TABLE ... FORCE ROW LEVEL SECURITY`. With no policy that applies, a role sees no rows and writes none.
+- **How they combine:** a command's permissive policies (the default) are ORed, its restrictive ones ANDed with them, and one permissive policy at least must allow a row. `USING` decides the rows `SELECT`, `UPDATE` and `DELETE` see (the others are passed by, not refused); `WITH CHECK` (or `USING`, for a policy without one) the rows `INSERT` and `UPDATE` write, which are refused with 42501 (`new row violates row-level security policy for table "t"`). Where a statement reads the table (a `WHERE`, `RETURNING`, `ON CONFLICT DO UPDATE`), its rows must also pass the `SELECT` policies, as in Postgres 16.
+- **Everywhere rows are read:** joins, subqueries wherever they are, `WITH` (`RECURSIVE` too), views (as the view's owner, whose policies they are, while `current_user` stays the one asking), functions in `FROM` and their arguments, PL/pgSQL's expressions and `EXECUTE`, `COPY ... TO`, `INSERT ... ON CONFLICT`, `UPDATE ... FROM`, `DELETE ... USING` and `MERGE`; `REFRESH MATERIALIZED VIEW` reads as the view's owner. A policy's own subqueries are read with the privileges and policies of the role reading, so a policy that reads another table's policy that reads it back is 42P17. `COPY ... FROM` into a table whose policies apply is 0A000 (use `INSERT`). Foreign keys, unique keys and `TRUNCATE` see every row.
+- **`SET row_security = off`** makes a statement the policies would limit fail (42501) instead, which is what pg_dump sets; a role that bypasses them is unaffected.
+- **Partitions and inheritance:** a parent's policies apply when the parent is read, a partition's or child's own when it is read directly.
+- **Worlds:** policies and a table's row security are rows of the world, as its schema is: a fork has its parent's, `MERGE WORLD` brings a world's (two worlds adding policies to one table merge without a conflict), `DIFF` shows them (`AS SQL` too), and `RESTORE` puts them back as they were. A read `AS OF` a moment gets the policies the table had then, and those its name has now.
+- **What a policy reads is bound when it's made:** a table or function its maker's `search_path` finds outside public is written with its schema in the policy, and its other names are public's (a built-in function's name, the built-in), whatever the `search_path` of whoever reads; a temporary table named like a table a policy reads makes such a read fail (0A000) rather than stand in for it. Renaming a column renames it in the policies that read it (one read in a policy's subquery can't be renamed: drop the policy first); dropping one a policy reads needs `CASCADE`, which drops the policy.
+- **The row API:** the HTTP and MCP `get`, `find`, `put`, `delete`, `batch`, `diff` and `merge` work on rows as they are, so an agent whose role (a role of its name) a policy limits on a table is refused them there (403, 42501): it reads and writes those rows with SQL.
+- **The catalog:** `pg_class.relrowsecurity` and `relforcerowsecurity`, `pg_tables.rowsecurity`, `pg_policy` and `pg_policies`; psql's `\d` shows a table's policies and `\dp` their column, and `pg_dump` writes them, which restore.
+
 ## Limits for the whole database
 
 ```sql
