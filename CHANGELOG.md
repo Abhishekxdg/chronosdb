@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**oid and smallint are types of their own**
+- `oid` was a bigint: it is an unsigned 32-bit integer now (type 26, four bytes in binary), as in Postgres. It reads text as oidin does (`'-1'` is 4294967295, `0x10` hex), wraps an int4 and refuses a negative int8 or anything past 32 bits (22003), compares unsigned, has no arithmetic, `sum` or `avg` (42883), casts to int4 by its bits and to int8, text and the reg types only (42846), and is a string in json. Columns of type `oid`, `min`/`max`, `tableoid`, `regclass::oid`, the catalog's oid columns and functions' oid parameters (which take a regproc, as Postgres converts one) are oids.
+- `smallint` reached clients as `int4`: it is int2 now (type 21, two bytes in binary, parameters too). Arithmetic of two smallints is a smallint checked to 16 bits (22003), of a smallint and an integer an integer; `sum` is a bigint, `avg` a numeric, `min`/`max`/`abs` smallints; CASE, COALESCE and UNION widen as Postgres does; `CREATE TABLE AS` and views keep smallint columns; and a function of a smallint parameter is the exact match among overloads (`f(1::smallint)` between `f(int)` and `f(bigint)` is ambiguous, 42725, as in Postgres).
+
 **Logging in with SCRAM-SHA-256 and MD5**
 - A role made with `CREATE ROLE ... PASSWORD` logs in with its password, which nothing checked before: SCRAM-SHA-256 against its verifier (AuthenticationSASL, as Postgres 16 runs the exchange: its nonces, salt and iteration count, its errors, 28P01 for a wrong password and 08P01 for a malformed message), or MD5 when it is kept as an md5 hash (`SET password_encryption = 'md5'`). That holds on loopback without a token too; a role without a password where the server has a token is refused with 28P01, as Postgres refuses it. A verifier made by the client (psql's `\password`, or one copied from Postgres's `pg_authid`) logs in as well (`tests/scram.rs`).
 - Over TLS, SCRAM-SHA-256-PLUS is offered too, bound to the server's certificate (`tls-server-end-point`), so libpq's and tokio-postgres's `channel_binding=require` work; a client that saw another certificate is refused (28000).
