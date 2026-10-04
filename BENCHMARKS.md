@@ -276,6 +276,30 @@ The protocol join + `GROUP BY` that started this, 11.5 ms against Postgres's 6.9
 - **The protocol itself** costs about 31 µs per round trip over TCP for Chronos, and about 35 µs for Postgres over TCP (25 µs over a Unix socket, which Chronos doesn't offer yet).
 - **Engine-only timings** are 2.8 µs for a lookup by key and about 1.4 µs per inserted row, plus about 0.4 µs per row to parse a long `VALUES` list.
 
+### Correlated subqueries, joins on expressions and long `IN` lists (2026-10-02)
+
+A CRM demo (six agents on one Chronos) showed minutes-long statements over a 150,600-row `leads` table. Alone, the plain `GROUP BY` ones were fast; the slow ones were correlated `EXISTS` / `NOT EXISTS`, a join on `lower(a.email) = lower(b.email)` and `x IN (select ...)` over a long list (the rest of what the agents saw was queueing: `chronos mcp` serves one request at a time per process). [PR #72](https://github.com/Abhishekxdg/chronosdb-engine/pull/72) fixed them (see [SQL](docs/sql.md#speed)).
+
+`python bench/sql-subqueries/bench.py` runs each statement alone on 150,600 rows (25,000 accounts of 6 leads in 10 regions; region R3 has 15,000 leads of 2,500 companies; a `PRIMARY KEY` on `id` and one index on `region`) and prints the wall time and a digest of the sorted rows. Run on an idle GCP e2-standard-4 (4 vCPUs, 16 GB, Ubuntu 24.04, cross-built Linux binaries), one run each, statements stopped at 450 s. Before is `main` at `b8624047`, after is `c7f90dda`. Raw output is in [`bench/results/2026-10-02-sql-subqueries/`](bench/results/2026-10-02-sql-subqueries).
+
+| statement | before | after |
+|---|---|---|
+| `group by company having count(*) > 1`, one region | 0.07 s | 0.08 s |
+| CTE of `max(created_at)` per company, joined back | 0.11 s | 0.19 s |
+| `group by lower(email)`, one region | 0.09 s | 0.11 s |
+| correlated `EXISTS` (a newer lead of the same company), 15,000 outer rows | 169 s | 0.17 s |
+| `DELETE` with that `EXISTS` | 167 s | 0.25 s |
+| correlated `NOT EXISTS` (the newest lead per company) | 173 s | 0.21 s |
+| `id IN (select ... join on lower(l1.email) = lower(l2.email))` | over 450 s | 0.26 s |
+| `company IN (15,000 values)` over the whole table | 27.4 s | 0.22 s |
+| `company NOT IN (15,000 values)` | 28.0 s | 0.36 s |
+| `EXISTS` on an unindexed column, every row as outer | 7.6 s | 0.96 s |
+| `NOT EXISTS` on `email`, every row as outer | over 450 s | 1.16 s |
+| `EXISTS` on the indexed `region` (15,000 rows per probe) | 330 s | 0.77 s |
+| `EXISTS` with 243 distinct outer values against one 50,000-row bucket | 5.8 s | 2.9 s |
+
+Every statement the old build finished returns the same rows on both builds (same digests). The three plain `GROUP BY` / CTE statements were never slow and are unchanged. The last row gains least: the old per-row path already kept its answer for each distinct outer value, so it ran 243 times, and the new one does the same work 243 times over a hash bucket. A correlated subquery whose equality is on an indexed column keeps running per outer row until that has taken half a second, then hashes (the `EXISTS` on `region` row).
+
 ## 5. Crash safety
 
 These are correctness checks, not speed, but they belong on the record. Each ran on the PR build and on `8db2f701`.
@@ -850,6 +874,7 @@ chronos serve /tmp/sqlbench & N=10000 cargo run --release --example sql   # need
 N=200000 cargo run --release --example report                       # PG=off runs Chronos alone
 ROWS=500000 AGENT=100000 OTHERS=50000 cargo run --release --example undo_agent
 CHRONOS_CACHE_MB=32 MB=500 cargo run --release --example big            # builds ~800 MB in a temp folder
+python bench/sql-subqueries/bench.py [--timeout 300]                # the CRM demo's slow SQL on 150,600 rows; needs psql
 python bench/vector_dbs.py [system ...]                             # one system per run; see its header
 DATA=... python bench/rivals/pgvector_ef.py                         # pgvector's ef_search sweep on a loaded table
 SWEEP=1 ROWS=100000 cargo run --release --example worlds            # 10 .. 100,000 worlds
