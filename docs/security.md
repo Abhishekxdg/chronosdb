@@ -27,15 +27,17 @@ The short version: **agents can't write `main`, and a person approves merges.** 
 
 ### Postgres (`chronos serve`, port 5433)
 
-The user name matters only when it names an agent. The password is cleartext (Postgres's `AuthenticationCleartextPassword`): there are no Postgres users or roles, and no SCRAM or MD5.
+The user name chooses how the client proves who it is. An agent sends its token in the clear (Postgres's `AuthenticationCleartextPassword`: the token is kept only as a hash, so there is nothing to check a SCRAM proof against). A role made with `CREATE ROLE ... PASSWORD` proves it knows its password with SCRAM-SHA-256 (MD5 if it is kept as an md5 hash), even on loopback without a token. That guards only that role's own name, though: **without `--token`, loopback is trust for every other name**, and such a login is a superuser that may `SET SESSION AUTHORIZATION` to any role. Role passwords protect something only on a server with `--token`. Any other name proves with SCRAM-SHA-256 that it knows the server's (or admin) token, which never crosses the wire; over TLS the proof is bound to the server's certificate (SCRAM-SHA-256-PLUS), so `channel_binding=require` in libpq stops a server in the middle. See [Postgres compatibility](postgres-compatibility.md#connecting).
 
 | Server started with | Client connects as | Gets |
 |---|---|---|
-| no `--token` (loopback only) | any user, no password asked | the database's own user |
+| no `--token` (loopback only) | any user but a role with a password, no password asked | the database's own user, or the role |
 | no `--token` | `user=<agent>`, `password=<its token>` | that agent |
-| `--token T` | any user, `password=T` | the database's own user |
+| `--token T` | any user but a role, `password=T` | the database's own user |
 | `--token T` | `user=<agent>`, `password=<its token>` | that agent |
-| `--token T`, or an agent user | a wrong or missing password | refused: `28P01 wrong password: use the server's token, or the agent's` |
+| any | `user=<role>`, `password=<its password>` | that role, with its privileges |
+| `--token T`, or an agent user | a wrong or missing password | refused: `28P01 password authentication failed for user "..."` (an agent: `28P01 wrong password: use the server's token, or the agent's`) |
+| `--token T` | a role without a password | refused: `28P01`, as Postgres refuses it |
 | `--safe` | anyone who isn't an agent or the admin token (the server token included) | the guest |
 | `--safe --admin-token A` | any user, `password=A` | the database's own user |
 
@@ -45,6 +47,7 @@ psql "postgres://bot:chronos_4f…@db.internal:5433/agent_7"         # agent bot
 ```
 
 - **With `--admin-token` and no `--token`,** every connection is asked for a password (it may be the admin token), and one that is neither the admin token nor an agent's just makes the client the guest.
+- **Agents and the guest never read the passwords roles keep** (`pg_authid.rolpassword` and `pg_shadow.passwd` are 42501 to them, as to a role that isn't a superuser), so they can't answer a role's MD5 challenge with its hash.
 - **A disabled or dropped agent** can't log in (`28P01`). An open session of an agent that's disabled is refused from its next statement.
 - **The database name** is the world to start on (`main`, a world's name or ID, or `name@when` to read the past). An unknown one is `3D000`.
 - **TLS:** with `--tls-cert` and `--tls-key`, a connection that doesn't start TLS is refused (`28000 this server requires TLS`). Without them, a client asking for TLS is told no and carries on in plain text. See [transport](#transport-tls).
@@ -302,7 +305,8 @@ Found in a full code review on 2026-09-26 and still open on `main` (the review's
 - **`$N` parameter numbers in a statement aren't capped:** `$999999999` makes room for that many. (`repeat()`, `lpad()`, `rpad()` and `format()` widths past 1 GB are refused with 54000.)
 - **A panic can leave internal locks poisoned.** Most counters and flags recover, but a panic while the database holds one of its internal read-write locks (the list of worlds, a world's state, checkpoints) makes later writes fail until a restart.
 - **A failed write while adding a page to a page file** (a full disk, for instance) can leave the file's later offsets wrong for pages written after it in that process. Keep disk space monitored.
-- **Postgres auth is a cleartext password** that is the server token, the admin token or an agent's token: no Postgres users, roles, SCRAM or `pg_hba.conf`.
+- **Agents log in over Postgres with a cleartext password** (their token, kept only as a hash, so no SCRAM verifier can be made from it): use TLS off loopback. There is no `pg_hba.conf`.
+- **Names show before logging in.** With `--token`, the server asks an agent for a cleartext password and any other name for SCRAM, so a client without a token can tell which names are agents; a role with a password also gets its own SCRAM salt. Postgres hides which roles exist; Chronos doesn't yet.
 - **No request-rate limits** on either port beyond agents' own quotas (connections are capped at 1000 per port).
 
 What to do meanwhile:

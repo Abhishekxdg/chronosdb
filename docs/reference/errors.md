@@ -110,8 +110,8 @@ A merge that would break a constraint, though each side was valid alone, fails w
 
 | Code | Meaning | Typical causes |
 |---|---|---|
-| 28000 | invalid authorization specification | the server has TLS and the client didn't ask for it: connect with `sslmode=require` |
-| 28P01 | invalid password | a password that is neither the server's token nor the agent's (the user name) token; see [security](../security.md) |
+| 28000 | invalid authorization specification | the server has TLS and the client didn't ask for it: connect with `sslmode=require`; a role that may not log in (`NOLOGIN`); a SCRAM channel binding that doesn't match the server's certificate |
+| 28P01 | invalid password | a password that is neither the server's token nor the agent's (the user name) token, or not the role's own; a role without a password where the server has a token, or past its `VALID UNTIL`; see [security](../security.md) |
 
 ### Class 2B: dependent objects
 
