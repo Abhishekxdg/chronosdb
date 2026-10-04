@@ -732,6 +732,8 @@ grant usage on schema s to readers;
 grant select on s.orders to readers;
 grant insert (note), update (note) on s.orders to app;
 revoke execute on function s.f() from public;
+alter default privileges for role app in schema s
+  grant select on tables to readers;            -- what app makes in s from now on, readers may read
 alter table s.orders owner to app;
 set role app;                                   -- current_user is app until RESET ROLE
 select has_table_privilege('s.orders', 'insert'), pg_has_role('readers', 'member');
@@ -739,7 +741,7 @@ select has_table_privilege('s.orders', 'insert'), pg_has_role('readers', 'member
 
 - **What's checked:** reading and writing rows (by column too), sequences, function calls, naming things in a schema and making things in it, and owning what's dropped or altered, as Postgres checks them; a view reads its tables with its owner's privileges, and a `SECURITY DEFINER` function runs as its owner. See [Postgres compatibility](postgres-compatibility.md#roles-and-privileges) for the whole list and what isn't checked yet.
 - **Who is a superuser:** a role made `SUPERUSER`, and every login whose name is no role: every login was a superuser before roles, and still is, so a database that never makes a role works as before. Objects such a login makes are owned by `chronos`, the bootstrap superuser.
-- **Roles are the database's, grants the world's:** every world sees the same roles; a world's tables carry their owners and grants through forks and merges. Role statements take effect at once, even inside a transaction.
+- **Roles are the database's, grants the world's:** every world sees the same roles; a world's tables carry their owners and grants through forks and merges, and default privileges (`ALTER DEFAULT PRIVILEGES`) fork and merge with the world too. Role statements take effect at once, even inside a transaction.
 - **Agents** keep their capabilities; an agent with a role of its name has that role's privileges too, and needs the `admin` capability to make or grant roles. Roles that aren't superusers can't touch worlds (fork, merge, restore, `DIFF`): give a program an agent for that.
 - **Passwords** are kept as SCRAM-SHA-256 verifiers, never in the clear (`PASSWORD 'x'`), with `scram_iterations` iterations (4096 unless set) of the password after SASLprep, as Postgres keeps them, and a role with one logs in with it: SCRAM-SHA-256, or MD5 for one kept as an md5 hash (`SET password_encryption = 'md5'`). An agent's token has a verifier too, made by `CREATE AGENT` with the session's `scram_iterations`.
 
