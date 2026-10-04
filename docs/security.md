@@ -27,16 +27,16 @@ The short version: **agents can't write `main`, and a person approves merges.** 
 
 ### Postgres (`chronos serve`, port 5433)
 
-The user name chooses how the client proves who it is. An agent sends its token in the clear (Postgres's `AuthenticationCleartextPassword`: the token is kept only as a hash, so there is nothing to check a SCRAM proof against). A role made with `CREATE ROLE ... PASSWORD` proves it knows its password with SCRAM-SHA-256 (MD5 if it is kept as an md5 hash), even on loopback without a token. That guards only that role's own name, though: **without `--token`, loopback is trust for every other name**, and such a login is a superuser that may `SET SESSION AUTHORIZATION` to any role. Role passwords protect something only on a server with `--token`. Any other name proves with SCRAM-SHA-256 that it knows the server's (or admin) token, which never crosses the wire; over TLS the proof is bound to the server's certificate (SCRAM-SHA-256-PLUS), so `channel_binding=require` in libpq stops a server in the middle. See [Postgres compatibility](postgres-compatibility.md#connecting).
+The user name chooses how the client proves who it is. An agent proves with SCRAM-SHA-256 that it knows its token, against a verifier of it that `CREATE AGENT` keeps beside the token's hash, so the token never crosses the wire. An agent made by an older Chronos, which kept only the hash, sends its token in the clear (`AuthenticationCleartextPassword`) once: that login keeps a verifier of it, and from then on it uses SCRAM. A role made with `CREATE ROLE ... PASSWORD` proves it knows its password with SCRAM-SHA-256 (MD5 if it is kept as an md5 hash), even on loopback without a token. That guards only that role's own name, though: **without `--token`, loopback is trust for every other name**, and such a login is a superuser that may `SET SESSION AUTHORIZATION` to any role. Role passwords protect something only on a server with `--token`. Any other name proves with SCRAM-SHA-256 that it knows the server's (or admin) token, which never crosses the wire; over TLS the proof is bound to the server's certificate (SCRAM-SHA-256-PLUS), so `channel_binding=require` in libpq stops a server in the middle. See [Postgres compatibility](postgres-compatibility.md#connecting).
 
 | Server started with | Client connects as | Gets |
 |---|---|---|
 | no `--token` (loopback only) | any user but a role with a password, no password asked | the database's own user, or the role |
 | no `--token` | `user=<agent>`, `password=<its token>` | that agent |
-| `--token T` | any user but a role, `password=T` | the database's own user |
+| `--token T` | any user but a role or an agent, `password=T` | the database's own user |
 | `--token T` | `user=<agent>`, `password=<its token>` | that agent |
 | any | `user=<role>`, `password=<its password>` | that role, with its privileges |
-| `--token T`, or an agent user | a wrong or missing password | refused: `28P01 password authentication failed for user "..."` (an agent: `28P01 wrong password: use the server's token, or the agent's`) |
+| `--token T`, or an agent user | a wrong or missing password | refused: `28P01 password authentication failed for user "..."` (an agent made by an older Chronos, before its first login: `28P01 wrong password: use the server's token, or the agent's`) |
 | `--token T` | a role without a password | refused: `28P01`, as Postgres refuses it |
 | `--safe` | anyone who isn't an agent or the admin token (the server token included) | the guest |
 | `--safe --admin-token A` | any user, `password=A` | the database's own user |
@@ -48,7 +48,9 @@ psql "postgres://bot:chronos_4f…@db.internal:5433/agent_7"         # agent bot
 
 - **With `--admin-token` and no `--token`,** every connection is asked for a password (it may be the admin token), and one that is neither the admin token nor an agent's just makes the client the guest.
 - **Agents and the guest never read the passwords roles keep** (`pg_authid.rolpassword` and `pg_shadow.passwd` are 42501 to them, as to a role that isn't a superuser), so they can't answer a role's MD5 challenge with its hash.
-- **A disabled or dropped agent** can't log in (`28P01`). An open session of an agent that's disabled is refused from its next statement.
+- **A disabled or dropped agent** can't log in (`28P01`, after the same SCRAM exchange as a wrong token). An open session of an agent that's disabled is refused from its next statement.
+- **An agent's name takes only its token**, not the server's or admin token (a role's name takes only its password). An agent with a role of its name logs in as the agent; the role's password doesn't log that name in.
+- **Which names exist doesn't show before logging in.** With `--token`, every name gets SCRAM with the same iteration count and a salt of its own, the same each time: a role's or agent's verifier's salt, or for any other name one made from the name and a secret the server draws at start, as Postgres's mock authentication does. A login that can't succeed runs the whole exchange and gets `28P01`, and every SCRAM login takes its last step in the same time, so how long a login takes doesn't tell either. See [Postgres compatibility](postgres-compatibility.md#connecting) for what still shows.
 - **The database name** is the world to start on (`main`, a world's name or ID, or `name@when` to read the past). An unknown one is `3D000`.
 - **TLS:** with `--tls-cert` and `--tls-key`, a connection that doesn't start TLS is refused (`28000 this server requires TLS`). Without them, a client asking for TLS is told no and carries on in plain text. See [transport](#transport-tls).
 
@@ -134,7 +136,7 @@ curl -s -H "Authorization: Bearer $CHRONOS_TOKEN" localhost:7070/v1/drop_agent -
 
 - **Names:** letters, digits, `_` and `-`. `guest` and `system` are the database's own (`22023`). A dropped agent's name can't be reused while it still owns worlds (`22023`): merge or drop them first, so a new agent never inherits them.
 - **Times:** in SQL, `world_ttl` and `max_query_ms` take an interval (`'1 day'`) or milliseconds; over HTTP, milliseconds.
-- **Tokens:** `chronos_` and 64 hex digits (32 bytes from `/dev/urandom`). Only the token's blake3 hash is stored, and an agent's ID (`a` and 16 hex digits) is derived from it. There's no rotation: disable the agent and make a new one.
+- **Tokens:** `chronos_` and 64 hex digits (32 bytes from `/dev/urandom`). Only the token's blake3 hash is stored, with a SCRAM-SHA-256 verifier of it for Postgres logins (as a role's password is kept), and an agent's ID (`a` and 16 hex digits) is derived from it. There's no rotation: disable the agent and make a new one.
 - **Anyone who may read** can run `SHOW AGENTS` and `SHOW AUDIT` in SQL (they're reads: names, rights, quotas and actions, never tokens). The HTTP `agents` and `audit` ops need `admin`.
 
 ### What it may do
@@ -305,8 +307,8 @@ Found in a full code review on 2026-09-26 and still open on `main` (the review's
 - **`$N` parameter numbers in a statement aren't capped:** `$999999999` makes room for that many. (`repeat()`, `lpad()`, `rpad()` and `format()` widths past 1 GB are refused with 54000.)
 - **A panic can leave internal locks poisoned.** Most counters and flags recover, but a panic while the database holds one of its internal read-write locks (the list of worlds, a world's state, checkpoints) makes later writes fail until a restart.
 - **A failed write while adding a page to a page file** (a full disk, for instance) can leave the file's later offsets wrong for pages written after it in that process. Keep disk space monitored.
-- **Agents log in over Postgres with a cleartext password** (their token, kept only as a hash, so no SCRAM verifier can be made from it): use TLS off loopback. There is no `pg_hba.conf`.
-- **Names show before logging in.** With `--token`, the server asks an agent for a cleartext password and any other name for SCRAM, so a client without a token can tell which names are agents; a role with a password also gets its own SCRAM salt. Postgres hides which roles exist; Chronos doesn't yet.
+- **An agent made by an older Chronos logs in once in the clear.** Its token was kept only as a hash, so its first login after the upgrade sends the token (use TLS off loopback) and keeps a SCRAM verifier of it. Until that login, the server asks its name for a cleartext password, which tells it apart from others. There is no token rotation: to be rid of the cleartext login without one, disable the agent and make a new one. There is no `pg_hba.conf`.
+- **Names that still show.** A role whose password is kept as an md5 hash is asked for MD5 (as under Postgres's `md5` method). The secret mock salts are made from is drawn at each start, so a name with no verifier gets a new salt after a restart where a role keeps its own; Postgres keeps its secret across restarts.
 - **No request-rate limits** on either port beyond agents' own quotas (connections are capped at 1000 per port).
 
 What to do meanwhile:
